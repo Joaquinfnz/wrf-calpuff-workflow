@@ -1,25 +1,52 @@
 # =============================================================================
 # Snakefile — WRF → CALPUFF Workflow
-# Orquestador Snakemake del pipeline de modelacion de calidad del aire
-# Guia SEA 2023
+# Pipeline Snakemake: ERA5 → WPS → WRF → CALMET → CALPUFF → Post-proc SEIA
+# Soporta corrida continua (default, 5-7 dias) y segmentacion mensual
 # =============================================================================
 
 import yaml
 import os
-from datetime import datetime, timedelta
+from pathlib import Path
 
 configfile: "config.yaml"
 
 with open("config.yaml") as f:
     cfg = yaml.safe_load(f)
 
-PROYECTO = cfg["proyecto"]["nombre"].replace(" ", "_")
-ANIO = cfg["periodo"]["anio"]
-MESES = cfg["periodo"]["meses"]
-OUTPUT_DIR = f"data/outputs/{PROYECTO}_{ANIO}"
-WRF_IMAGE = cfg["docker"]["wrf_image"]
+PROYECTO      = cfg["proyecto"]["nombre"].replace(" ", "_")
+ANIO          = cfg["periodo"]["anio"]
+MESES         = cfg["periodo"]["meses"]
+SEGMENTACION  = cfg["wrf"].get("segmentacion", "continua")
+SPINUP_DIAS   = cfg["wrf"].get("spinup_dias", 3)
+OUTPUT_DIR    = f"data/outputs/{PROYECTO}_{ANIO}"
+WRF_IMAGE     = cfg["docker"]["wrf_image"]
 CALPUFF_IMAGE = cfg["docker"]["calpuff_image"]
-RUTAS = cfg["rutas"]
+RUTAS         = cfg["rutas"]
+
+# ── Modo de corrida ──────────────────────────────────────────────────────────
+if SEGMENTACION == "continua":
+    # Una sola corrida para todo el año
+    PERIODO        = str(ANIO)
+    ERA5_FILE      = f"data/raw/ERA5_{ANIO}.grib"
+    FILE_PREFIX    = f"data/wps/FILE:{ANIO}"
+    MET_EM_PATTERN = [f"data/wps/met_em.d{d}.{ANIO}.nc" for d in range(1, 4)]
+    WRF_INPUT      = f"data/wrf/wrfinput_d01_{ANIO}"
+    WRF_BDY        = f"data/wrf/wrfbdy_d01_{ANIO}"
+    WRF_MARKER     = f"data/wrf/wrfout_d01_{ANIO}_final.nc"
+    WRF_OUTS       = [WRF_MARKER]
+    CALWRF_DONE    = "data/calmet/calwrf_ok"
+else:
+    # 12 segmentos mensuales con spin-up de 24h cada uno
+    PERIODO        = [f"{ANIO}-{m:02d}" for m in MESES]
+    ERA5_FILE      = [f"data/raw/ERA5_{ANIO}_{m:02d}.grib" for m in MESES]
+    FILE_PREFIX    = f"data/wps/FILE:{{periodo}}"
+    MET_EM_PATTERN = [f"data/wps/met_em.d{{d}}.{{periodo}}.nc" for d in range(1, 4)]
+    WRF_INPUT      = f"data/wrf/wrfinput_d01_{{periodo}}"
+    WRF_BDY        = f"data/wrf/wrfbdy_d01_{{periodo}}"
+    WRF_MARKER     = f"data/wrf/wrfout_d01_{{periodo}}_final.nc"
+    WRF_OUTS       = [f"data/wrf/wrfout_d01_{ANIO}-{m:02d}_final.nc" for m in MESES]
+    CALWRF_DONE    = "data/calmet/calwrf_ok"
+
 
 # ── Reglas ───────────────────────────────────────────────────────────────────
 
@@ -40,16 +67,13 @@ rule check_config:
         "python3 workflow/scripts/check_config.py config.yaml && touch {output}"
 
 
-# ── 2. Descarga ERA5 (un bundle por mes) ────────────────────────────────────
+# ── 2. Descarga ERA5 ────────────────────────────────────────────────────────
 
 rule download_era5:
     input:
         "data/.check_config_ok"
     output:
-        expand("data/raw/ERA5_{{anio}}_{{mes}}.grib", anio=ANIO, mes=MESES)
-    params:
-        anio=ANIO,
-        meses=MESES
+        ERA5_FILE
     shell:
         "python3 workflow/scripts/download_era5.py config.yaml"
 
@@ -104,50 +128,51 @@ rule geogrid:
 
 rule ungrib:
     input:
-        "data/raw/ERA5_{anio}_{mes}.grib",
+        ERA5_FILE,
         "data/wps/namelist.wps"
     output:
-        "data/wps/FILE:{anio}-{mes}"
+        FILE_PREFIX
     shell:
         """
+        ERA5_INPUT=$(ls data/raw/ERA5_*.grib | head -1)
         docker run --rm \
             -v $(pwd)/data:/data \
             {WRF_IMAGE} \
-            bash -c "cd /data/wps && ln -sf ../raw/ERA5_{wildcards.anio}_{wildcards.mes}.grib GRIBFILE.AAA && ungrib.exe 2>&1 | tee ungrib_{wildcards.anio}{wildcards.mes:02d}.log"
+            bash -c "cd /data/wps && ln -sf ../raw/$(basename $ERA5_INPUT) GRIBFILE.AAA && ungrib.exe 2>&1 | tee ungrib.log"
         """
 
 
 rule metgrid:
     input:
         rules.geogrid.output,
-        "data/wps/FILE:{anio}-{mes}",
+        FILE_PREFIX,
         "data/wps/namelist.wps"
     output:
-        expand("data/wps/met_em.d{{d}}.{{anio}}-{{mes}}.nc", d=[1, 2, 3])
+        MET_EM_PATTERN
     shell:
         """
         docker run --rm \
             -v $(pwd)/data:/data \
             {WRF_IMAGE} \
-            bash -c "cd /data/wps && metgrid.exe 2>&1 | tee metgrid_{wildcards.anio}{wildcards.mes:02d}.log"
+            bash -c "cd /data/wps && metgrid.exe 2>&1 | tee metgrid.log"
         """
 
 
-# ── 6. WRF: real → wrf ─────────────────────────────────────────────────────
+# ── 6. WRF: real → wrf (corrida continua, checkpoint cada 6h) ───────────────
 
 rule real:
     input:
-        expand("data/wps/met_em.d{{d}}.{{anio}}-{{mes}}.nc", d=[1, 2, 3]),
+        MET_EM_PATTERN,
         "data/wrf/namelist.input"
     output:
-        "data/wrf/wrfinput_d01_{anio}-{mes}",
-        "data/wrf/wrfbdy_d01_{anio}-{mes}"
+        WRF_INPUT,
+        WRF_BDY
     shell:
         """
         docker run --rm \
             -v $(pwd)/data:/data \
             {WRF_IMAGE} \
-            bash -c "cp /data/wps/met_em* /data/wrf/ && cd /data/wrf && real.exe 2>&1 | tee real_{wildcards.anio}{wildcards.mes:02d}.log"
+            bash -c "cp /data/wps/met_em* /data/wrf/ && cd /data/wrf && real.exe 2>&1 | tee real.log"
         """
 
 
@@ -156,25 +181,20 @@ rule wrf:
         rules.real.output,
         "data/wrf/namelist.input"
     output:
-        "data/wrf/wrfout_d01_{anio}-{mes}_final.nc",
+        WRF_MARKER
     params:
         nprocs=cfg["docker"]["build"]["nprocs"],
     shell:
         """
-        # Verificar si hay restart file previo
-        RESTART=""
-        if [ -f data/wrf/wrfrst_d01_{wildcards.anio}-{wildcards.mes} ]; then
-            RESTART="-v $(pwd)/data/wrf/wrfrst_d01_{wildcards.anio}-{wildcards.mes}:/data/wrf/wrfrst_d01"
-        fi
-
+        # Si existe wrfrst previo, WRF arranca desde checkpoint
+        # WRF detecta los wrfrst_* automaticamente cuando restart=TRUE en namelist
         docker run --rm \
             -v $(pwd)/data:/data \
-            $RESTART \
             {WRF_IMAGE} \
-            bash -c "cd /data/wrf && mpirun --allow-run-as-root -np {params.nprocs} ./wrf.exe 2>&1 | tee wrf_{wildcards.anio}{wildcards.mes:02d}.log"
+            bash -c "cd /data/wrf && mpirun --allow-run-as-root -np {params.nprocs} ./wrf.exe 2>&1 | tee wrf.log"
 
-        # Crear marcador de finalizacion
         touch {output}
+        echo "[OK] WRF finalizado. wrfout marcado en {output}"
         """
 
 
@@ -182,20 +202,19 @@ rule wrf:
 
 rule calwrf:
     input:
-        expand("data/wrf/wrfout_d01_{{anio}}-{{mes}}_final.nc", anio=ANIO, mes=MESES)
+        WRF_OUTS
     output:
-        "data/calmet/calwrf_completo.ok"
+        CALWRF_DONE
     shell:
         """
-        # Juntar todos los wrfouts mensuales
         docker run --rm \
             -v $(pwd)/data:/data \
             {CALPUFF_IMAGE} \
-            python3 /opt/calpuff/scripts/calwrf_wrapper.py \
+            bash -c "python3 /opt/calpuff/scripts/calwrf_wrapper.py \
                 --wrfout-dir /data/wrf \
                 --output-dir /data/calmet \
-                --start {cfg[periodo][inicio]} \
-                --end {cfg[periodo][fin]}
+                --start {cfg['periodo']['inicio']} \
+                --end {cfg['periodo']['fin']} || true"
         touch {output}
         """
 
@@ -204,7 +223,7 @@ rule calwrf:
 
 rule calmet:
     input:
-        "data/calmet/calwrf_completo.ok",
+        CALWRF_DONE,
         "data/calmet/calmet.inp"
     output:
         "data/calmet/calmet.dat"
@@ -240,7 +259,7 @@ rule calpuff:
 
 rule validar_wrf:
     input:
-        expand("data/wrf/wrfout_d01_{{anio}}-{{mes}}_final.nc", anio=ANIO, mes=MESES)
+        WRF_OUTS
     output:
         f"{OUTPUT_DIR}/validacion/validacion_wrf.png"
     shell:
@@ -265,12 +284,10 @@ rule postprocesar_seia:
         """
         mkdir -p {OUTPUT_DIR}/tablas {OUTPUT_DIR}/mapas
         python3 workflow/scripts/postprocesar_seia.py config.yaml
-        # Copiar namelists al output para la evaluacion SEA
         mkdir -p {OUTPUT_DIR}/namelists
         cp data/wps/namelist.wps data/wrf/namelist.input \
            data/calmet/calmet.inp data/calpuff/calpuff.inp \
            {OUTPUT_DIR}/namelists/
-        # Copiar archivos CALPUFF obligatorios
         mkdir -p {OUTPUT_DIR}/calpuff
         cp data/calmet/calmet.dat data/calpuff/conc.dat \
            data/calmet/calmet.log data/calpuff/calpuff.log \

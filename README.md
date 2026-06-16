@@ -87,8 +87,15 @@ Te trae:
 | Internet | Para descargar ERA5 y WPS_GEOG |
 
 **Opciones de servidor:**
-- **Hetzner Server Auction**: ~€40-50/mes, das de baja cuando terminas. Costo ~€5-10 por modelacion.
-- **AWS EC2**: c5n.18xlarge spot (~$0.50/h), ~$60-90 por modelacion de 3 semanas.
+
+| Opcion | Cores | Costo/modelacion | Setup | Nota |
+|--------|-------|-----------------|-------|------|
+| **Hetzner Auction (recomendado)** | 32-64T | **~€15-20** | SSH, listo | Recomendado. Simple, barato, sin IAM. Cancelas al terminar. |
+| AWS EC2 spot | 72 vCPU | ~$85 | IAM + VPC + SG | Riesgo: spot puede interrumpir. Checkpoint mitiga. |
+| AWS EC2 on-demand | 72 vCPU | ~$566 | IAM + VPC + SG | Caro, solo si necesitas 100% uptime. |
+
+> En Hetzner Auction elegis el server con mas cores disponible en el momento.
+> Minimo recomendado: 24 cores / 48 threads, 128 GB RAM, 1 TB disco.
 
 ---
 
@@ -101,8 +108,8 @@ ERA5 (CDS API)
 WPS: geogrid → ungrib → metgrid
     │
     ▼
-WRF: real → wrf (12 meses, spin-up 24h c/u)
-    │                 checkpoint wrfrst cada 6h
+WRF: real → wrf (corrida continua, checkpoint cada 6h)
+    │                 
     ▼
 CALWRF → CALMET → CALPUFF
     │
@@ -115,15 +122,13 @@ Post-procesamiento SEIA
     · Validacion meteorologica
 ```
 
-## Tiempos estimados por modelacion de 1 año
+## Tiempos estimados (corrida continua, 1 año)
 
-| Etapa | Duracion |
-|-------|----------|
-| Descarga ERA5 | 4-6 horas |
-| WRF (12 segmentos mensuales, 32 cores) | 18-22 dias |
-| CALPUFF | 1-2 dias |
-| Post-procesamiento | 2-3 horas |
-| **Total** | **~20-25 dias** |
+| Cores | WRF | CALPUFF | Total |
+|-------|-----|---------|-------|
+| 64 threads (Hetzner Epyc 32C / AWS c5n) | 4-6 dias | 1 dia | **5-7 dias** |
+| 48 threads (Hetzner Epyc 24C) | 6-8 dias | 1 dia | **7-9 dias** |
+| 32 threads (Hetzner Xeon 16C) | 10-14 dias | 1 dia | **11-15 dias** |
 
 ## Parametrizaciones fisicas
 

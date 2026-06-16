@@ -35,9 +35,11 @@ wrf:
   frames_per_outfile: [24, 24, 24] # 24 frames por archivo (1 dia)
   restart_interval: 360            # Checkpoint cada 6h
 
-  # Segmentacion temporal: 12 meses con spin-up de 24h cada uno
-  segmentacion: "mensual"
-  spinup_horas: 24
+  # Segmentacion temporal
+  # "continua" = corrida unica año completo (recomendado, ~5-7 dias en 64 cores)
+  # "mensual"  = 12 segmentos con spin-up cada uno (~15-18 dias en 64 cores)
+  segmentacion: "continua"
+  spinup_dias: 3  # solo aplica si segmentacion = "mensual"
 
   dominios:
     d01:
