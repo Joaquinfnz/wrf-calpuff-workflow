@@ -1,0 +1,219 @@
+# =============================================================================
+# calpuff.inp — Jinja2 Template
+# CALPUFF 7.x input file generado desde config.yaml
+# Requisito SEA: debe entregarse en la evaluacion
+# =============================================================================
+CALPUFF.INP     2.1                          File Version
+--------------  Run title (80 characters)
+Estudio de modelacion de calidad del aire - {{ proyecto.nombre }}
+--------------  Run title continued
+
+INPUT GROUP 0 -- Input and Output File Names
+-------------
+CALPUFF.LST    * PUFLST *
+CONC.DAT       * CONDAT *
+DFLUX.DAT      * DFDAT  *
+WFLUX.DAT      * WFDAT  *
+! VISIB.DAT    * VISDAT *
+! RESTART.DAT  * RSTART *
+
+-------------- Subgroup (0a)
+CALMET.DAT     * METDAT *
+-------------- Subgroup (0b)
+! for ICHEM=0, IISIZE=0
+! --------------
+
+INPUT GROUP 1 -- General run control parameters
+-------------
+METRUN      = {{ calpuff.metrun }}  ! 1=Run all periods in METDAT
+IBYR        = {{ inicio_year }}
+IBMONTH     = {{ inicio_month }}
+IBDAY       = {{ inicio_day }}
+IBHR        = {{ inicio_hour }}
+IBSEC       = 0
+IEYR        = {{ fin_year }}
+IEMONTH     = {{ fin_month }}
+IEDAY       = {{ fin_day }}
+IEHR        = {{ fin_hour }}
+IESEC       = 0
+NSPEC       = {{ calpuff.nspt1 }}  ! Number of species
+NSE         = {{ calpuff.nsecdt }}  ! Sampling step (seconds)
+ITOTAL      = 0
+NSTART      = 0
+NRESTART    = 0
+LCONC       = T
+LDRY        = F
+LWET        = F
+LT2D        = F
+LTRACE      = F
+LTURB       = F
+LVIS        = F
+LDEBUG      = F
+IPFTRA      = 0
+!----------- CTG source parameters
+NPT1        = {{ calpuff.npt1 }}  ! Number of point sources
+NAR1        = {{ calpuff.nar1 }}  ! Number of area sources
+NVL1        = {{ calpuff.nvol1 }} ! Number of volume sources
+NLN1        = {{ calpuff.nln1 }}  ! Number of line sources
+NSECDT      = 3600
+NSECBT      = 3600
+!----------- Species list
+CSPEC       = SO2, NOX, PM10, PM2_5
+!----------- Source-species mapping
+! SO2  : emitido por fuentes puntuales
+! NOX  : emitido por fuentes puntuales
+! PM10 : emitido por fuentes puntuales
+! PM2_5: emitido por fuentes puntuales
+
+INPUT GROUP 2 -- Technical Options
+-------------
+!----------- Vertical distribution
+MGAUSS      = 0   ! 0=Uniform vertical distribution
+MCTADJ      = 3   ! 3=Transitional plume rise
+MFRONT      = 1   ! 1=Use observed mixing height
+MBDW        = 1
+MBDW2       = 0
+!----------- Dispersion
+MDISP       = 3   ! 3=PG dispersion coefficients
+MTIP        = 1   ! 1=Use partial plume penetration
+MRISE       = 1   ! 1=Use Briggs plume rise
+!----------- Chemistry
+MCHEM       = 1   ! 1=MESOPUFF II chemical transformation
+!----------- Wet/Dry deposition
+MDRY        = 0   ! 0=No dry deposition
+MWET        = 0   ! 0=No wet deposition
+!----------- Wind field
+MCONV       = 1   ! 1=Use internally calculated diffusivity
+!----------- Coastal
+MCOAST      = 0   ! 0=No coastal boundary
+!----------- Terrain
+MCTSG       = 0   ! 0=Flat terrain
+!----------- Other
+MSLUG       = 0   ! 0=Standard time step
+MTRANS      = 1   ! 1=Release all puffs in 1 step
+MTIP        = 1
+MRISE       = 1
+MBDW        = 1
+MSHEAR      = 0
+MSPLIT      = 0
+MCALM       = 0
+MPARTL      = 0
+MPARTLBA    = 0
+MTINV       = 0
+MPDF        = 0
+MSUBGR      = 0
+MHTS        = 0
+MCLOUD      = 0
+MOPTION     = 0
+NPT2        = 0
+!----------- Puff sampling
+MCLSAM      = 1
+MLSAM       = 1
+!----------- Deposition parameters
+! (not applicable when MDRY=0, MWET=0)
+! ----------- Time-varying emissions
+! (source parameters are read from external file)
+
+INPUT GROUP 3 -- Species list
+-------------
+! SO2
+SO2          = 0    ! 0=Gas
+WETVLV       = 1.0E-05  ! Wet scavenging coefficient (L/mol/s)
+GRECPT       = 0.0  ! Grassy acceptance
+REACT        = 0.0  ! Nighttime loss rate (1/s)
+OFREACT      = 0.0  ! Ozone loss rate
+FRACSAT      = 0.0  ! Fraction of saturation
+VDEPG        = 0.0  ! Deposition velocity (gas) (cm/s)
+VDEPA        = 0.0  ! Deposition velocity (aerosol)
+HENRY        = 1.0E+05  ! Henry's Law constant
+RSCALE       = 0.0
+BCKGRD       = 0.0  ! Background concentration
+
+! NOX
+NOX          = 0
+WETVLV       = 1.0E-05
+GRECPT       = 0.0
+REACT        = 0.0
+OFREACT      = 0.0
+FRACSAT      = 0.0
+VDEPG        = 0.0
+VDEPA        = 0.0
+HENRY        = 4.7E-02
+RSCALE       = 0.0
+BCKGRD       = 0.0
+
+! PM10
+PM10         = 1    ! 1=Particle
+WETVLV       = 1.0E-05
+GRECPT       = 0.0
+REACT        = 0.0
+OFREACT      = 0.0
+FRACSAT      = 0.0
+VDEPG        = 0.0
+VDEPA        = 0.0
+HENRY        = 0.0
+RSCALE       = 0.0
+BCKGRD       = 0.0
+
+! PM25
+PM25         = 1
+WETVLV       = 1.0E-05
+GRECPT       = 0.0
+REACT        = 0.0
+OFREACT      = 0.0
+FRACSAT      = 0.0
+VDEPG        = 0.0
+VDEPA        = 0.0
+HENRY        = 0.0
+RSCALE       = 0.0
+BCKGRD       = 0.0
+
+INPUT GROUP 4 -- Grid definition
+-------------
+! ----------- Computational grid
+IBX         = {{ calmet.nx }}
+IBY         = {{ calmet.ny }}
+IBZ         = {{ calmet.nz }}
+DGRID       = {{ calmet.dgridkm }}
+XORIG       = {{ calmet_xorig }}
+YORIG       = {{ calmet_yorig }}
+
+! ----------- Sampling grid
+NSGX        = {{ calmet.nx }}
+NSGY        = {{ calmet.ny }}
+DSGRID      = {{ calmet.dgridkm }}
+
+! ----------- Vertical levels
+ZFACE       = 0, 20, 40, 80, 160, 300, 600, 1000, 1500, 2200, 3000, 4000, 5000
+
+! ----------- Output options
+! (ICON = 1: output concentration for each species at each receptor)
+! (ICON = 2: output concentration for each hour)
+ICON        = 2
+IDRY        = 0
+IWET        = 0
+IVIS        = 0
+IT2D        = 0
+
+INPUT GROUP 5 -- Output options
+-------------
+! ----------- Averaging times (L_CONC must be T in Group 1)
+! Averages: 1hr, 3hr, 8hr, 24hr, annual
+IAVRT       = 1,3,8,24,0,0,0,0,0,0,0,0
+
+! ----------- Puff sampling (in hours)
+! Default = 1 hr
+NSPT1       = 1
+
+! ----------- Output units: 1=ug/m3
+IOUTU       = 1
+!
+! ----------- Discrete receptor output
+LDRNG       = F
+CNDCNS      = 0.0, 0.0, 0.0, 0.0
+LCHG        = F
+LCOE        = F
+LHOURLY     = F
+LDBUG       = F
+LFILE       = F
+LRANK       = F

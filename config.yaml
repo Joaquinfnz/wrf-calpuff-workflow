@@ -1,0 +1,186 @@
+# =============================================================================
+# WRF → CALPUFF Workflow — Configuracion de modelacion
+# Guia SEA 2023 "Uso de modelos de calidad del aire en el SEIA" v4
+# =============================================================================
+
+# ── Proyecto ─────────────────────────────────────────────────────────────────
+proyecto:
+  nombre: "Sin Nombre"
+  descripcion: ""
+  consultora: ""
+
+# ── Dominios WRF ─────────────────────────────────────────────────────────────
+# Se modelan 3 dominios anidados two-way nesting
+# d01 grueso (~9 km), d02 intermedio (~3 km), d03 fino (~1 km)
+# Requisito SEA: resolucion <= 1 km en dominio mas fino, >= 50 celdas
+wrf:
+  max_dom: 3
+  interval_seconds: 21600  # ERA5 cada 6h
+  e_vert: 40               # Niveles verticales
+  p_top_requested: 5000    # Tope en Pa
+  num_metgrid_levels: 34   # Niveles desde ERA5
+
+  # Parametrizaciones fisicas (Falvey/Schmitz, validado sur de Chile)
+  physics:
+    mp_physics:         [6, 6, 6]     # WSM6 microphysics
+    cu_physics:         [1, 1, 0]     # Kain-Fritsch (d01,d02), off d03
+    bl_pbl_physics:     [1, 1, 1]     # YSU boundary layer
+    sf_sfclay_physics:  [1, 1, 1]     # Revised MM5 surface layer
+    sf_surface_physics: [2, 2, 2]     # Noah LSM
+    ra_sw_physics:      [1, 1, 1]     # Dudhia shortwave
+    ra_lw_physics:      [1, 1, 1]     # RRTM longwave
+
+  # WRF output config
+  history_interval: [60, 60, 60]   # Output cada 60 min (horario para CALPUFF)
+  frames_per_outfile: [24, 24, 24] # 24 frames por archivo (1 dia)
+  restart_interval: 360            # Checkpoint cada 6h
+
+  # Segmentacion temporal: 12 meses con spin-up de 24h cada uno
+  segmentacion: "mensual"
+  spinup_horas: 24
+
+  dominios:
+    d01:
+      resolution_km: 9
+      e_we: 61
+      e_sn: 61
+      parent_grid_ratio: 1
+      parent_id: 1
+      i_parent_start: 1
+      j_parent_start: 1
+    d02:
+      resolution_km: 3
+      e_we: 61
+      e_sn: 61
+      parent_grid_ratio: 3
+      parent_id: 1
+      i_parent_start: 21
+      j_parent_start: 21
+    d03:
+      resolution_km: 1
+      e_we: 61
+      e_sn: 61
+      parent_grid_ratio: 3
+      parent_id: 2
+      i_parent_start: 21
+      j_parent_start: 21
+
+  # Proyeccion — Lambert conformal conic
+  map_proj: "lambert"
+
+  # Coordenadas del centro del dominio (modificar segun proyecto)
+  ref_lat: -41.115
+  ref_lon: -73.041
+  truelat1: -33.417
+  truelat2: -35.048
+  stand_lon: -73.041
+  geog_data_res: ["30s", "30s", "30s"]
+
+# ── Periodo de modelacion ────────────────────────────────────────────────────
+# Requisito SEA: 1 año completo como minimo para contaminantes primarios
+# Se modela segmentado en 12 meses con spin-up de 24h cada segmento
+periodo:
+  inicio: "2023-12-29_00:00:00"
+  fin:    "2024-12-31_18:00:00"
+  anio:   2024
+  meses: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]
+
+# ── ERA5 Download (CDS API) ──────────────────────────────────────────────
+era5:
+  area: [-45, -76, -38, -69]  # [N, W, S, E] — cubre sur de Chile
+  grid: [0.25, 0.25]          # Resolucion ERA5
+  pressure_levels: "1000/975/950/925/900/850/800/700/600/500/400/300/200/100/50"
+  variables_surface: "10m_u_component_of_wind/10m_v_component_of_wind/2m_temperature/2m_dewpoint_temperature/mean_sea_level_pressure/sea_surface_temperature/skin_temperature"
+  variables_pressure: "geopotential/temperature/u_component_of_wind/v_component_of_wind/relative_humidity"
+  cds_api_key: ""             # Key de CDS (setear en variable de entorno CDSAPI_KEY)
+  cds_api_url: "https://cds.climate.copernicus.eu/api/v2"
+
+# ── CALMET ───────────────────────────────────────────────────────────────────
+calmet:
+  nx: 60
+  ny: 60
+  nz: 12               # Niveles verticales CALMET
+  dgridkm: 1.0         # Resolucion (km)
+  iwfcod: 1            # Usar campos 3D de WRF directamente
+  iculdat: 1           # Usar datos de uso de suelo de WRF
+  itergrd: 1           # Esquema TERGRAD (terrain gradient adjustments)
+  bias: [-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1]
+
+# ── CALPUFF ──────────────────────────────────────────────────────────────────
+calpuff:
+  nsecdt: 3600         # Paso temporal 1h
+  nspt1: 4             # Numero de especies
+  npt1: 0              # Numero de fuentes puntuales
+  nar1: 0              # Numero de fuentes de area
+  nln1: 0              # Numero de fuentes lineales
+  nvol1: 0             # Numero de fuentes volumetricas
+  metrun: 1            # Correr CALMET primero
+  mavgfl: 1            # Archivo de promedios horarios
+
+# ── Receptores (grillas SEA) ─────────────────────────────────────────────────
+receptores:
+  generar_grillas: true
+  grillas_sea:
+    - espaciado_m: 20
+      cobertura_km: 0.5
+    - espaciado_m: 50
+      cobertura_km: 2
+    - espaciado_m: 250
+      cobertura_km: 5
+    - espaciado_m: 500
+      cobertura_km: 10
+    - espaciado_m: 1000
+      cobertura_km: 20
+  receptores_discretos: "receptores.csv"  # Receptores sensibles (opcional)
+
+# ── Emisiones ────────────────────────────────────────────────────────────────
+# Requisito SEA: tasas horarias reales, no promedios diarios/anuales
+emisiones:
+  archivo: "emisiones.csv"
+  formato: "horario"   # Obligatorio segun guia SEA
+
+# ── Normas de calidad del aire (DS 38/2011, DS 104/2018) ─────────────────────
+normas:
+  MP10:
+    anual: 50    # ug/m3, DS 38/2011
+    diaria: 150  # ug/m3, percentil 98, DS 38/2011
+  MP2_5:
+    anual: 20    # ug/m3, DS 104/2018
+    diaria: 50   # ug/m3, percentil 98, DS 104/2018
+  SO2:
+    anual: 80    # ug/m3, DS 38/2011
+    diaria: 310  # ug/m3, percentil 99, DS 38/2011
+    horaria: 544 # ug/m3, percentil 99.73, DS 38/2011
+  NO2:
+    anual: 100   # ug/m3, DS 38/2011
+    horaria: 400 # ug/m3, percentil 99.79, DS 38/2011
+  CO:
+    horaria: 30000  # ug/m3, percentil 99, DS 115/2002
+    octohoraria: 10000  # ug/m3, DS 115/2002
+  O3:
+    octohoraria: 127  # ug/m3, percentil 99, DS 112/2002
+
+# ── Validacion meteorologica ─────────────────────────────────────────────────
+# Requisito SEA: comparar WRF vs observaciones >= 1 año
+validacion:
+  observaciones: "observaciones.csv"  # Datos de estacion meteorologica
+  metricas: ["rmse", "mae", "sesgo", "ioa", "r2"]
+  variables: ["t2", "ws10", "wd10"]
+
+# ── Rutas del servidor ───────────────────────────────────────────────────────
+rutas:
+  data: "/data/wrf-calpuff"
+  outputs: "/data/wrf-calpuff/outputs"
+  wps_geog: "/data/WPS_GEOG"          # Datos estaticos de terreno (~30 GB)
+  era5_raw: "/data/wrf-calpuff/raw"
+  docker_images: "ghcr.io/joaquinfnz"
+
+# ── Docker ───────────────────────────────────────────────────────────────────
+docker:
+  wrf_image: "wrf-wps:4.6"
+  calpuff_image: "calpuff:7"
+  build:
+    wrf_version: "4.6.0"
+    wps_version: "4.6.0"
+    use_mpi: true
+    nprocs: 32

@@ -1,0 +1,7 @@
+# ── Receptores Discretos (poblados, colegios, etc.) ─────────────────────────
+# Columnas: nombre, x_utm, y_utm, elev_m, zona_utm, huso, hemisferio
+# =============================================================================
+nombre,x_utm,y_utm,elev_m,zona_utm,huso,hemisferio
+Poblado-01,640500,5430500,125,18,H,S
+Escuela-01,641000,5430000,120,18,H,S
+Hospital-01,639500,5431000,135,18,H,S

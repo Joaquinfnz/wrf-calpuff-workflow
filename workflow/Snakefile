@@ -1,0 +1,278 @@
+# =============================================================================
+# Snakefile — WRF → CALPUFF Workflow
+# Orquestador Snakemake del pipeline de modelacion de calidad del aire
+# Guia SEA 2023
+# =============================================================================
+
+import yaml
+import os
+from datetime import datetime, timedelta
+
+configfile: "config.yaml"
+
+with open("config.yaml") as f:
+    cfg = yaml.safe_load(f)
+
+PROYECTO = cfg["proyecto"]["nombre"].replace(" ", "_")
+ANIO = cfg["periodo"]["anio"]
+MESES = cfg["periodo"]["meses"]
+OUTPUT_DIR = f"data/outputs/{PROYECTO}_{ANIO}"
+WRF_IMAGE = cfg["docker"]["wrf_image"]
+CALPUFF_IMAGE = cfg["docker"]["calpuff_image"]
+RUTAS = cfg["rutas"]
+
+# ── Reglas ───────────────────────────────────────────────────────────────────
+
+rule all:
+    input:
+        f"{OUTPUT_DIR}/tablas/concentraciones_vs_norma.xlsx",
+        f"{OUTPUT_DIR}/mapas/isoconcentracion_mp10_24h.png",
+        f"{OUTPUT_DIR}/memoria_calculo.md",
+        f"{OUTPUT_DIR}/validacion/validacion_wrf.png",
+
+
+# ── 1. Check de config SEA ──────────────────────────────────────────────────
+
+rule check_config:
+    output:
+        "data/.check_config_ok"
+    shell:
+        "python3 workflow/scripts/check_config.py config.yaml && touch {output}"
+
+
+# ── 2. Descarga ERA5 (un bundle por mes) ────────────────────────────────────
+
+rule download_era5:
+    input:
+        "data/.check_config_ok"
+    output:
+        expand("data/raw/ERA5_{{anio}}_{{mes}}.grib", anio=ANIO, mes=MESES)
+    params:
+        anio=ANIO,
+        meses=MESES
+    shell:
+        "python3 workflow/scripts/download_era5.py config.yaml"
+
+
+# ── 3. Renderizar namelists ─────────────────────────────────────────────────
+
+rule render_namelists:
+    input:
+        "data/.check_config_ok"
+    output:
+        "data/wps/namelist.wps",
+        "data/wrf/namelist.input",
+        "data/calmet/calmet.inp",
+        "data/calpuff/calpuff.inp"
+    shell:
+        "python3 workflow/scripts/render_namelist.py config.yaml"
+
+
+# ── 4. Limpiar outputs previos ──────────────────────────────────────────────
+
+rule limpiar:
+    input:
+        "data/wps/namelist.wps"
+    output:
+        "data/.limpio"
+    shell:
+        """
+        rm -f data/wps/met_em.d0* data/wps/GRIBFILE.* data/wps/FILE:*
+        rm -f data/wrf/rsl.* data/wrf/wrfinput_d0* data/wrf/wrfbdy_d0*
+        touch {output}
+        """
+
+
+# ── 5. WPS: geogrid → ungrib → metgrid ─────────────────────────────────────
+
+rule geogrid:
+    input:
+        "data/wps/namelist.wps",
+        "data/.limpio"
+    output:
+        expand("data/wps/geo_em.d{{d}}.nc", d=[1, 2, 3])
+    shell:
+        """
+        docker run --rm \
+            -v $(pwd)/data:/data \
+            -v {RUTAS[wps_geog]}:/data/WPS_GEOG \
+            {WRF_IMAGE} \
+            bash -c "cd /data/wps && ln -sf /data/WPS_GEOG . && geogrid.exe" \
+            2>&1 | tee data/wps/geogrid.log
+        """
+
+
+rule ungrib:
+    input:
+        "data/raw/ERA5_{anio}_{mes}.grib",
+        "data/wps/namelist.wps"
+    output:
+        "data/wps/FILE:{anio}-{mes}"
+    shell:
+        """
+        docker run --rm \
+            -v $(pwd)/data:/data \
+            {WRF_IMAGE} \
+            bash -c "cd /data/wps && ln -sf ../raw/ERA5_{wildcards.anio}_{wildcards.mes}.grib GRIBFILE.AAA && ungrib.exe 2>&1 | tee ungrib_{wildcards.anio}{wildcards.mes:02d}.log"
+        """
+
+
+rule metgrid:
+    input:
+        rules.geogrid.output,
+        "data/wps/FILE:{anio}-{mes}",
+        "data/wps/namelist.wps"
+    output:
+        expand("data/wps/met_em.d{{d}}.{{anio}}-{{mes}}.nc", d=[1, 2, 3])
+    shell:
+        """
+        docker run --rm \
+            -v $(pwd)/data:/data \
+            {WRF_IMAGE} \
+            bash -c "cd /data/wps && metgrid.exe 2>&1 | tee metgrid_{wildcards.anio}{wildcards.mes:02d}.log"
+        """
+
+
+# ── 6. WRF: real → wrf ─────────────────────────────────────────────────────
+
+rule real:
+    input:
+        expand("data/wps/met_em.d{{d}}.{{anio}}-{{mes}}.nc", d=[1, 2, 3]),
+        "data/wrf/namelist.input"
+    output:
+        "data/wrf/wrfinput_d01_{anio}-{mes}",
+        "data/wrf/wrfbdy_d01_{anio}-{mes}"
+    shell:
+        """
+        docker run --rm \
+            -v $(pwd)/data:/data \
+            {WRF_IMAGE} \
+            bash -c "cp /data/wps/met_em* /data/wrf/ && cd /data/wrf && real.exe 2>&1 | tee real_{wildcards.anio}{wildcards.mes:02d}.log"
+        """
+
+
+rule wrf:
+    input:
+        rules.real.output,
+        "data/wrf/namelist.input"
+    output:
+        "data/wrf/wrfout_d01_{anio}-{mes}_final.nc",
+    params:
+        nprocs=cfg["docker"]["build"]["nprocs"],
+    shell:
+        """
+        # Verificar si hay restart file previo
+        RESTART=""
+        if [ -f data/wrf/wrfrst_d01_{wildcards.anio}-{wildcards.mes} ]; then
+            RESTART="-v $(pwd)/data/wrf/wrfrst_d01_{wildcards.anio}-{wildcards.mes}:/data/wrf/wrfrst_d01"
+        fi
+
+        docker run --rm \
+            -v $(pwd)/data:/data \
+            $RESTART \
+            {WRF_IMAGE} \
+            bash -c "cd /data/wrf && mpirun --allow-run-as-root -np {params.nprocs} ./wrf.exe 2>&1 | tee wrf_{wildcards.anio}{wildcards.mes:02d}.log"
+
+        # Crear marcador de finalizacion
+        touch {output}
+        """
+
+
+# ── 7. CALWRF: convertir wrfout → inputs CALMET ─────────────────────────────
+
+rule calwrf:
+    input:
+        expand("data/wrf/wrfout_d01_{{anio}}-{{mes}}_final.nc", anio=ANIO, mes=MESES)
+    output:
+        "data/calmet/calwrf_completo.ok"
+    shell:
+        """
+        # Juntar todos los wrfouts mensuales
+        docker run --rm \
+            -v $(pwd)/data:/data \
+            {CALPUFF_IMAGE} \
+            python3 /opt/calpuff/scripts/calwrf_wrapper.py \
+                --wrfout-dir /data/wrf \
+                --output-dir /data/calmet \
+                --start {cfg[periodo][inicio]} \
+                --end {cfg[periodo][fin]}
+        touch {output}
+        """
+
+
+# ── 8. CALMET ───────────────────────────────────────────────────────────────
+
+rule calmet:
+    input:
+        "data/calmet/calwrf_completo.ok",
+        "data/calmet/calmet.inp"
+    output:
+        "data/calmet/calmet.dat"
+    shell:
+        """
+        docker run --rm \
+            -v $(pwd)/data:/data \
+            {CALPUFF_IMAGE} \
+            bash -c "cd /data/calmet && calmet.exe calmet.inp 2>&1 | tee calmet.log"
+        """
+
+
+# ── 9. CALPUFF ──────────────────────────────────────────────────────────────
+
+rule calpuff:
+    input:
+        "data/calmet/calmet.dat",
+        "data/calpuff/calpuff.inp",
+        "emisiones.csv"
+    output:
+        "data/calpuff/conc.dat"
+    shell:
+        """
+        docker run --rm \
+            -v $(pwd)/data:/data \
+            -v $(pwd)/emisiones.csv:/data/calpuff/emisiones.csv \
+            {CALPUFF_IMAGE} \
+            bash -c "cd /data/calpuff && calpuff.exe calpuff.inp 2>&1 | tee calpuff.log"
+        """
+
+
+# ── 10. Validacion WRF vs observaciones ─────────────────────────────────────
+
+rule validar_wrf:
+    input:
+        expand("data/wrf/wrfout_d01_{{anio}}-{{mes}}_final.nc", anio=ANIO, mes=MESES)
+    output:
+        f"{OUTPUT_DIR}/validacion/validacion_wrf.png"
+    shell:
+        """
+        mkdir -p {OUTPUT_DIR}/validacion
+        python3 workflow/scripts/validar_wrf.py config.yaml
+        """
+
+
+# ── 11. Post-procesamiento SEIA ─────────────────────────────────────────────
+
+rule postprocesar_seia:
+    input:
+        "data/calpuff/conc.dat",
+        "receptores.csv",
+        "emisiones.csv"
+    output:
+        f"{OUTPUT_DIR}/tablas/concentraciones_vs_norma.xlsx",
+        f"{OUTPUT_DIR}/mapas/isoconcentracion_mp10_24h.png",
+        f"{OUTPUT_DIR}/memoria_calculo.md"
+    shell:
+        """
+        mkdir -p {OUTPUT_DIR}/tablas {OUTPUT_DIR}/mapas
+        python3 workflow/scripts/postprocesar_seia.py config.yaml
+        # Copiar namelists al output para la evaluacion SEA
+        mkdir -p {OUTPUT_DIR}/namelists
+        cp data/wps/namelist.wps data/wrf/namelist.input \
+           data/calmet/calmet.inp data/calpuff/calpuff.inp \
+           {OUTPUT_DIR}/namelists/
+        # Copiar archivos CALPUFF obligatorios
+        mkdir -p {OUTPUT_DIR}/calpuff
+        cp data/calmet/calmet.dat data/calpuff/conc.dat \
+           data/calmet/calmet.log data/calpuff/calpuff.log \
+           {OUTPUT_DIR}/calpuff/
+        """
