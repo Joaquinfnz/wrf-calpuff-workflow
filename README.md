@@ -1,117 +1,180 @@
 # WRF → CALPUFF Workflow — Modelacion de Calidad del Aire
 
-Pipeline reproducible de modelacion meteorologica (WRF) y dispersion de
-contaminantes (CALPUFF), alineado a la **Guia SEA 2023** para el uso de
-modelos de calidad del aire en el SEIA (v4, Feb 2023).
+Pipeline automatizado de modelacion meteorologica (WRF) y dispersion de
+contaminantes (CALPUFF), alineado a la **Guia SEA 2023** (v4, Feb 2023).
 
-## Requisitos
+Repo: https://github.com/Joaquinfnz/wrf-calpuff-workflow
 
-- Servidor con **≥ 32 cores, ≥ 128 GB RAM, ≥ 1 TB disco** (Hetzner Auction, AWS EC2 c5n.18xlarge, etc.)
-- Ubuntu 22.04 LTS
-- Docker + Docker Compose
-- API key de CDS (Copernicus) para ERA5
-- Binarios de CALPUFF (licencia TRC/Exponent)
+---
 
-## Instalacion rapida
+## Instalacion en tu servidor
 
 ```bash
-# 1. Conectate al servidor
-ssh user@server
+# 1. Conectate por SSH a tu servidor
+ssh ubuntu@<ip-del-servidor>
 
-# 2. Ejecuta el script de setup (1 sola vez, ~1.5-2h)
-curl -O https://raw.githubusercontent.com/Joaquinfnz/wrf-calpuff-workflow/main/scripts/setup_server.sh
-bash setup_server.sh
+# 2. Clona el repositorio
+git clone https://github.com/Joaquinfnz/wrf-calpuff-workflow.git
+cd wrf-calpuff-workflow
 
-# 3. Edita config.yaml con tu dominio, fechas y emisiones
+# 3. Ejecuta el script de instalacion (1 sola vez, ~1.5-2 horas)
+bash scripts/setup_server.sh
+```
+
+**Que hace `setup_server.sh`:**
+- Instala Docker, git, Python, tmux, herramientas
+- Descarga datos estaticos de terreno WPS_GEOG (~500 MB)
+- Construye las imagenes Docker con WRF 4.6 + WPS 4.6 y CALPUFF 7.x
+- Deja el servidor listo para modelar
+
+---
+
+## Como correr una modelacion
+
+```bash
+# 1. Edita la configuracion de tu proyecto
 nano config.yaml
 
+# 2. Coloca tu inventario de emisiones
+nano emisiones.csv
+
+# 3. Configura tu API key de ERA5
+export CDSAPI_KEY='uid:api-key'
+
 # 4. Lanza la modelacion
-export CDSAPI_KEY='tu-uid:tu-api-key'
 bash scripts/run.sh
 ```
+
+`run.sh` se encarga de:
+- Validar que la configuracion cumple la norma SEA
+- Descargar datos ERA5 del periodo
+- Generar los namelists automaticamente
+- Lanzar el pipeline WRF → CALPUFF en tmux
+- Checkpoint cada 6h para reanudar si se cae
+
+```bash
+# Para monitorear el progreso
+tmux attach -t wrf-calpuff
+
+# Para salir sin detener: Ctrl+B, luego D
+```
+
+---
+
+## Como bajar los resultados a tu laptop
+
+```bash
+bash scripts/sync_results.sh ubuntu@<ip-del-servidor>
+```
+
+Te trae:
+- Tablas Excel de concentraciones vs normas DS38
+- Mapas de isoconcentracion PNG
+- Memoria de calculo en Markdown
+- Validacion WRF vs observaciones (metricas + graficos)
+- Namelists y archivos CALPUFF para entregar al SEA
+
+---
+
+## Requisitos del servidor
+
+| Recurso | Minimo |
+|---------|--------|
+| CPU | 32 cores / 64 threads |
+| RAM | 128 GB |
+| Disco | 1 TB |
+| OS | Ubuntu 22.04 LTS |
+| Internet | Para descargar ERA5 y WPS_GEOG |
+
+**Opciones de servidor:**
+- **Hetzner Server Auction**: ~€40-50/mes, das de baja cuando terminas. Costo ~€5-10 por modelacion.
+- **AWS EC2**: c5n.18xlarge spot (~$0.50/h), ~$60-90 por modelacion de 3 semanas.
+
+---
 
 ## Pipeline
 
 ```
-ERA5 download (CDS API)
+ERA5 (CDS API)
     │
     ▼
 WPS: geogrid → ungrib → metgrid
     │
     ▼
-WRF: real → wrf (12 segmentos mensuales, spin-up 24h c/u)
-    │                       checkpoint wrfrst cada 6h
+WRF: real → wrf (12 meses, spin-up 24h c/u)
+    │                 checkpoint wrfrst cada 6h
     ▼
-CALWRF: convierte wrfout → inputs CALMET
+CALWRF → CALMET → CALPUFF
     │
     ▼
-CALMET: campos 3D diagnosticos
-    │
-    ▼
-CALPUFF: dispersion año completo
-    │
-    ▼
-Post-procesamiento SEIA:
-  · 5 grillas de receptores
-  · Tablas concentracion vs normas (DS 38/2011)
-  · Mapas de isoconcentracion
-  · Memoria de calculo auto-generada
-  · Validacion WRF vs observaciones
+Post-procesamiento SEIA
+    · 5 grillas de receptores anidadas
+    · Tablas vs DS 38/2011 y DS 104/2018
+    · Mapas de isoconcentracion
+    · Memoria de calculo auto-generada
+    · Validacion meteorologica
 ```
 
-## Parametrizaciones fisicas WRF
+## Tiempos estimados por modelacion de 1 año
+
+| Etapa | Duracion |
+|-------|----------|
+| Descarga ERA5 | 4-6 horas |
+| WRF (12 segmentos mensuales, 32 cores) | 18-22 dias |
+| CALPUFF | 1-2 dias |
+| Post-procesamiento | 2-3 horas |
+| **Total** | **~20-25 dias** |
+
+## Parametrizaciones fisicas
+
+Esquemas validados para el sur de Chile (Falvey & Garreaud 2009, Schmitz et al. 2021):
 
 | Esquema | Opcion | Descripcion |
 |---------|--------|-------------|
-| mp_physics | 6 | WSM6 microphysics |
-| cu_physics | 1/0 | Kain-Fritsch (d01,d02), off d03 |
-| bl_pbl_physics | 1 | YSU boundary layer |
-| sf_sfclay_physics | 1 | Revised MM5 surface layer |
-| sf_surface_physics | 2 | Noah LSM |
-| ra_sw_physics | 1 | Dudhia shortwave |
-| ra_lw_physics | 1 | RRTM longwave |
+| Microphysics | WSM6 (6) | Hielo, nieve y graupel |
+| Cumulus | Kain-Fritsch (1/0) | d01+d02, off en d03 |
+| Capa limite | YSU (1) | Non-local closure |
+| Capa superficial | Revised MM5 (1) | Monin-Obukhov |
+| Suelo | Noah LSM (2) | 4 capas de suelo |
+| Radiacion SW | Dudhia (1) | |
+| Radiacion LW | RRTM (1) | |
 
-Validado para el sur de Chile (Falvey & Garreaud 2009, Schmitz et al. 2021).
+## Archivos que entrega para el SEA
 
-## Estructura
+| Archivo | Exigencia SEA 2023 |
+|---------|-------------------|
+| `namelist.wps` + `namelist.input` | Obligatorio |
+| `calmet.inp` + `calmet.dat` | Obligatorio |
+| `calpuff.inp` + `conc.dat` | Obligatorio |
+| Tablas concentracion vs normas | Necesario |
+| Mapas de isoconcentracion | Necesario |
+| Validacion WRF vs observaciones | Obligatorio |
+| Memoria de calculo | Complementario |
+
+## Estructura del repositorio
 
 ```
-├── config.yaml              # Configuracion del proyecto
+├── config.yaml              # Dominio, fechas, fisicas, normas
 ├── emisiones.csv            # Inventario de emisiones (tasas horarias)
 ├── receptores.csv           # Receptores discretos sensibles
 ├── docker/
-│   ├── wrf/                 # Dockerfile WRF 4.6 + WPS 4.6
-│   └── calpuff/             # Dockerfile CALMET + CALPUFF + CALWRF
-├── static/
-│   ├── namelist.wps.j2      # Templates Jinja2
+│   ├── wrf/Dockerfile       # WRF 4.6 + WPS 4.6
+│   └── calpuff/Dockerfile   # CALMET + CALPUFF + CALWRF
+├── static/                  # Templates Jinja2 de namelists
+│   ├── namelist.wps.j2
 │   ├── namelist.input.j2
 │   ├── calmet.inp.j2
 │   └── calpuff.inp.j2
 ├── workflow/
 │   ├── Snakefile            # Pipeline Snakemake
-│   └── scripts/             # Python scripts
+│   └── scripts/             # Python: ERA5, renderizado, validacion, SEIA
 ├── scripts/
 │   ├── setup_server.sh      # Instalacion del servidor
 │   ├── run.sh               # Lanzar modelacion
 │   └── sync_results.sh      # Descargar resultados
-├── data/                    # Datos generados (ignorados por git)
-└── outputs/                 # Resultados finales
+├── data/                    # Datos generados (gitignored)
+└── outputs/                 # Resultados (gitignored)
 ```
-
-## Archivos para la evaluacion SEA
-
-Al terminar la modelacion, el workflow empaqueta automaticamente:
-
-| Archivo | Requisito SEA |
-|---------|--------------|
-| `namelist.wps` | Obligatorio |
-| `namelist.input` | Obligatorio |
-| `calmet.inp` + `calmet.dat` | Obligatorio |
-| `calpuff.inp` + `conc.dat` | Obligatorio |
-| Tablas de concentracion vs normas | Necesario |
-| Mapas de isoconcentracion | Necesario |
-| Memoria de calculo | Bueno entregar |
-| Validacion meteorologica | Obligatorio |
 
 ## Referencias
 
@@ -121,5 +184,4 @@ Al terminar la modelacion, el workflow empaqueta automaticamente:
 
 ## Licencia
 
-MIT — El workflow es open source. Los binarios de CALPUFF requieren licencia
-de TRC/Exponent (http://www.src.com/).
+MIT. Los binarios de CALPUFF requieren licencia de TRC/Exponent (http://www.src.com/).
