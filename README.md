@@ -32,16 +32,13 @@ bash scripts/setup_server.sh
 ## Como correr una modelacion
 
 ```bash
-# 1. Edita la configuracion de tu proyecto
-nano config.yaml
+# 1. Calcula las emisiones de tu proyecto (interactivo)
+python3 workflow/scripts/calcular_emisiones.py
 
-# 2. Coloca tu inventario de emisiones
-nano emisiones.csv
-
-# 3. Configura tu API key de ERA5
+# 2. Configura tu API key de ERA5
 export CDSAPI_KEY='uid:api-key'
 
-# 4. Lanza la modelacion
+# 3. Lanza la modelacion
 bash scripts/run.sh
 ```
 
@@ -73,6 +70,32 @@ Te trae:
 - Memoria de calculo en Markdown
 - Validacion WRF vs observaciones (metricas + graficos)
 - Namelists y archivos CALPUFF para entregar al SEA
+
+---
+
+## Calculador de emisiones
+
+El workflow incluye un calculador interactivo para generar el inventario de
+emisiones sin necesidad de hacer los calculos a mano.
+
+```bash
+python3 workflow/scripts/calcular_emisiones.py
+```
+
+**Presets disponibles:**
+
+| Preset | Fuentes incluidas |
+|--------|-------------------|
+| Extraccion de aridos | Chancado, acopio, transito interno |
+| Industrial | Calderas, grupos electrogenos |
+| Personalizado | Elegir fuentes una a una |
+
+**Fuentes soportadas:** calderas (gas/diesel), chancado/molino, acopios,
+transito no pavimentado (EPA AP-42 SS13.2.2), grupos electrogenos.
+
+Los factores de emision estan en `workflow/scripts/factores_emision.yaml`
+(EPA AP-42 + SEA Chile). Podes editarlos si tu proyecto requiere
+factores especificos.
 
 ---
 
