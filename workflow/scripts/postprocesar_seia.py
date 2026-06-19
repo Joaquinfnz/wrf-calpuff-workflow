@@ -50,68 +50,77 @@ def generar_grillas_receptores(cfg):
     return pd.DataFrame(receptores)
 
 
-def comparar_normas(concentraciones, cfg):
-    """Compara concentraciones modeladas contra normas chilenas"""
+DECRETOS = {
+    "SO2": "DS 38/2011",
+    "NO2": "DS 38/2011",
+    "NOX": "DS 38/2011",
+    "CO": "DS 115/2002",
+    "MP10": "DS 38/2011",
+    "MP2_5": "DS 104/2018",
+    "PM10": "DS 38/2011",
+    "PM2_5": "DS 104/2018",
+    "O3": "DS 112/2002",
+}
+
+
+def comparar_normas(conc_dat_path, cfg):
+    """Compara concentraciones modeladas contra normas chilenas.
+
+    Lee conc.dat (CALPUFF output) si existe. Si no, error.
+    """
     normas = cfg["normas"]
-    proyecto = cfg["proyecto"]["nombre"]
 
+    # ponytail: placeholder until calpost integration — read conc.dat
+    # if available, else raise. Never fabricate random values for SEIA.
+    if conc_dat_path is None or not Path(conc_dat_path).exists():
+        raise FileNotFoundError(
+            f"conc.dat no encontrado en {conc_dat_path}. "
+            "No se puede comparar contra normas sin resultados del modelo. "
+            "Ejecute CALPUFF primero."
+        )
+
+    # TODO: parse conc.dat binary format (CALPOST output) and extract
+    # receptor time series. For now, return empty DataFrame with correct schema.
     resultados = []
-
     for contaminante, valores in normas.items():
-        c_mean = np.random.uniform(0, valores.get("anual", valores.get("diaria", 100)) * 0.5)
-        c_max = np.random.uniform(valores.get("anual", valores.get("diaria", 100)) * 0.3,
-                                    valores.get("anual", valores.get("diaria", 100)) * 1.2)
-
+        decreto = DECRETOS.get(contaminante, "—")
         for periodo, limite in valores.items():
-            if periodo == "anual":
-                valor_modelado = c_mean
-            elif periodo == "diaria":
-                valor_modelado = np.random.uniform(limite * 0.4, limite * 1.1)
-            else:
-                valor_modelado = np.random.uniform(limite * 0.3, limite * 0.8)
-
-            cumple = "SI" if valor_modelado <= limite else "NO"
-
-            resultados.append({
-                "Contaminante": contaminante,
-                "Periodo": periodo,
-                "Norma (ug/m3)": limite,
-                "Modelado (ug/m3)": f"{valor_modelado:.1f}",
-                "Cumple": cumple,
-                "Norma de referencia": f"DS 38/2011" if "SO2" in contaminante or "NO2" in contaminante or "CO" in contaminante else "DS 104/2018"
-            })
+            if periodo in ("anual", "diaria", "8hr", "1hr"):
+                resultados.append({
+                    "Contaminante": contaminante,
+                    "Periodo": periodo,
+                    "Norma (ug/m3)": limite,
+                    "Modelado (ug/m3)": "pendiente",
+                    "Cumple": "pendiente",
+                    "Norma de referencia": decreto,
+                })
 
     return pd.DataFrame(resultados)
 
 
 def generar_mapa_isoconcentracion(out_dir, cfg):
-    """Genera mapa de isoconcentracion (placeholder grafico)"""
+    """Genera mapa de isoconcentracion.
+
+    TODO: Replace with real CALPOST conc.dat parsing.
+    Currently generates a PLACEHOLDER — do NOT submit to SEA.
+    """
     proyecto = cfg["proyecto"]["nombre"]
     anio = cfg["periodo"]["anio"]
 
     fig, ax = plt.subplots(figsize=(10, 10))
 
-    # Grilla sintetica de concentracion MP10 24h
+    # PLACEHOLDER — no real data yet
     nx, ny = 60, 60
     x = np.linspace(0, 10, nx)
     y = np.linspace(0, 10, ny)
     X, Y = np.meshgrid(x, y)
 
-    # Patron de concentracion falso (gaussiano desde centro)
-    cx, cy = 5, 5
-    sigma = 2.0
-    Z = 100 * np.exp(-((X - cx)**2 + (Y - cy)**2) / (2 * sigma**2))
-
-    contour = ax.contourf(X, Y, Z, levels=15, cmap="YlOrRd")
-    cbar = plt.colorbar(contour, ax=ax, label="Concentracion MP10 24h (ug/m3)")
-
-    # Linea de norma (150 ug/m3 DS 38/2011)
-    ax.contour(X, Y, Z, levels=[150], colors="red", linewidths=2, linestyles="--")
-    ax.text(6.5, 6.5, "150 ug/m3\n(DS 38/2011)", color="red", fontsize=8, fontweight="bold")
-
+    ax.text(5, 5, "PLACEHOLDER\nNo usar para SEIA\nRequiere integracion CALPOST",
+            ha="center", va="center", fontsize=16, color="red", fontweight="bold",
+            transform=ax.transData)
     ax.set_xlabel("X (km)")
     ax.set_ylabel("Y (km)")
-    ax.set_title(f"Isoconcentracion MP10 24h — {proyecto} {anio}")
+    ax.set_title(f"Isoconcentracion MP10 24h — {proyecto} {anio} [PLACEHOLDER]")
     ax.set_aspect("equal")
     fig.tight_layout()
 
@@ -119,7 +128,7 @@ def generar_mapa_isoconcentracion(out_dir, cfg):
     map_file.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(map_file, dpi=150, bbox_inches="tight")
     plt.close()
-    print(f"[OK] Mapa guardado: {map_file}")
+    print(f"[WARN] Mapa placeholder guardado: {map_file} — NO usar para SEIA")
 
 
 def generar_memoria_calculo(cfg, df_normas, out_dir):
@@ -254,7 +263,8 @@ def postprocesar_seia(config_path):
     print(f"[OK] Grillas SEA: {len(df_grillas)} receptores generados")
 
     # ── 2. Comparar vs normas ──────────────────────────────────────────────
-    df_normas = comparar_normas(None, cfg)
+    conc_dat = Path("data/calpuff/conc.dat")
+    df_normas = comparar_normas(conc_dat, cfg)
     normas_file = out_dir / "tablas" / "concentraciones_vs_norma.csv"
     df_normas.to_csv(normas_file, index=False)
 

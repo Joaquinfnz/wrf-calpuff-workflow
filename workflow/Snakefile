@@ -25,14 +25,14 @@ RUTAS         = cfg["rutas"]
 
 # ── Modo de corrida ──────────────────────────────────────────────────────────
 if SEGMENTACION == "continua":
-    # Una sola corrida para todo el año
+    # Una sola corrida para todo el año, pero ERA5 se baja por mes
     PERIODO        = str(ANIO)
-    ERA5_FILE      = f"data/raw/ERA5_{ANIO}.grib"
+    ERA5_FILE      = expand(f"data/raw/ERA5_{ANIO}_{{m:02d}}.grib", m=MESES)
     FILE_PREFIX    = f"data/wps/FILE:{ANIO}"
     MET_EM_PATTERN = [f"data/wps/met_em.d{d}.{ANIO}.nc" for d in range(1, 4)]
     WRF_INPUT      = f"data/wrf/wrfinput_d01_{ANIO}"
     WRF_BDY        = f"data/wrf/wrfbdy_d01_{ANIO}"
-    WRF_MARKER     = f"data/wrf/wrfout_d01_{ANIO}_final.nc"
+    WRF_MARKER     = f"data/wrf/.wrf_done_{ANIO}"
     WRF_OUTS       = [WRF_MARKER]
     CALWRF_DONE    = "data/calmet/calwrf_ok"
 else:
@@ -121,7 +121,7 @@ rule geogrid:
             -v $(pwd)/data:/data \
             -v {RUTAS[wps_geog]}:/data/WPS_GEOG \
             {WRF_IMAGE} \
-            bash -c "cd /data/wps && ln -sf /data/WPS_GEOG . && geogrid.exe" \
+            bash -o pipefail -c "cd /data/wps && ln -sf /data/WPS_GEOG . && geogrid.exe" \
             2>&1 | tee data/wps/geogrid.log
         """
 
@@ -134,11 +134,12 @@ rule ungrib:
         FILE_PREFIX
     shell:
         """
-        ERA5_INPUT=$(ls data/raw/ERA5_*.grib | head -1)
         docker run --rm \
             -v $(pwd)/data:/data \
             {WRF_IMAGE} \
-            bash -c "cd /data/wps && ln -sf ../raw/$(basename $ERA5_INPUT) GRIBFILE.AAA && ungrib.exe 2>&1 | tee ungrib.log"
+            bash -o pipefail -c "cd /data/wps && \
+                for f in ../raw/ERA5_*.grib; do ln -sf ../raw/$(basename $f) GRIBFILE.$(basename $f .grib | sed 's/ERA5_[0-9]*_//'); done && \
+                ungrib.exe 2>&1 | tee ungrib.log"
         """
 
 
@@ -154,7 +155,7 @@ rule metgrid:
         docker run --rm \
             -v $(pwd)/data:/data \
             {WRF_IMAGE} \
-            bash -c "cd /data/wps && metgrid.exe 2>&1 | tee metgrid.log"
+            bash -o pipefail -c "cd /data/wps && metgrid.exe 2>&1 | tee metgrid.log"
         """
 
 
@@ -172,7 +173,7 @@ rule real:
         docker run --rm \
             -v $(pwd)/data:/data \
             {WRF_IMAGE} \
-            bash -c "cp /data/wps/met_em* /data/wrf/ && cd /data/wrf && real.exe 2>&1 | tee real.log"
+            bash -o pipefail -c "cp /data/wps/met_em* /data/wrf/ && cd /data/wrf && real.exe 2>&1 | tee real.log"
         """
 
 
@@ -191,7 +192,7 @@ rule wrf:
         docker run --rm \
             -v $(pwd)/data:/data \
             {WRF_IMAGE} \
-            bash -c "cd /data/wrf && mpirun --allow-run-as-root -np {params.nprocs} ./wrf.exe 2>&1 | tee wrf.log"
+            bash -o pipefail -c "cd /data/wrf && mpirun --allow-run-as-root -np {params.nprocs} ./wrf.exe 2>&1 | tee wrf.log"
 
         touch {output}
         echo "[OK] WRF finalizado. wrfout marcado en {output}"
@@ -210,11 +211,11 @@ rule calwrf:
         docker run --rm \
             -v $(pwd)/data:/data \
             {CALPUFF_IMAGE} \
-            bash -c "python3 /opt/calpuff/scripts/calwrf_wrapper.py \
+            bash -o pipefail -c "python3 /opt/calpuff/scripts/calwrf_wrapper.py \
                 --wrfout-dir /data/wrf \
                 --output-dir /data/calmet \
                 --start {cfg['periodo']['inicio']} \
-                --end {cfg['periodo']['fin']} || true"
+                --end {cfg['periodo']['fin']}"
         touch {output}
         """
 
@@ -232,7 +233,7 @@ rule calmet:
         docker run --rm \
             -v $(pwd)/data:/data \
             {CALPUFF_IMAGE} \
-            bash -c "cd /data/calmet && calmet.exe calmet.inp 2>&1 | tee calmet.log"
+            bash -o pipefail -c "cd /data/calmet && calmet.exe calmet.inp 2>&1 | tee calmet.log"
         """
 
 
@@ -251,7 +252,7 @@ rule calpuff:
             -v $(pwd)/data:/data \
             -v $(pwd)/emisiones.csv:/data/calpuff/emisiones.csv \
             {CALPUFF_IMAGE} \
-            bash -c "cd /data/calpuff && calpuff.exe calpuff.inp 2>&1 | tee calpuff.log"
+            bash -o pipefail -c "cd /data/calpuff && calpuff.exe calpuff.inp 2>&1 | tee calpuff.log"
         """
 
 

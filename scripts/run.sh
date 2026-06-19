@@ -74,10 +74,10 @@ read -p "  Continuar con la descarga? [S/n] " -n 1 -r
 echo
 if [[ ! $REPLY =~ ^[Ss]$ ]] && [[ -n $REPLY ]]; then
     log_info "Omitiendo descarga. Si ERA5 ya fue descargado, continua."
+else
+    python3 workflow/scripts/download_era5.py config.yaml
+    log_info "ERA5 descargado"
 fi
-
-python3 workflow/scripts/download_era5.py config.yaml
-log_info "ERA5 descargado"
 
 # ── 3. Renderizar namelists ───────────────────────────────────────────────
 log_info "Paso 3/5: Renderizando namelists..."

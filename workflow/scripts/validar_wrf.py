@@ -38,7 +38,11 @@ def compute_metrics(obs, mod):
     den = np.sum((np.abs(m - o_mean) + np.abs(o - o_mean)) ** 2)
     ioa = 1 - num / den if den > 0 else np.nan
 
-    return {"n": len(o), "rmse": rmse, "mae": mae, "sesgo": sesgo, "ioa": ioa, "r2": r2}
+    # FB (Fractional Bias) and NMSE (Normalized Mean Square Error) — SEA 2023
+    fb = 2 * (np.mean(m) - np.mean(o)) / (np.mean(m) + np.mean(o)) if (np.mean(m) + np.mean(o)) != 0 else np.nan
+    nmse = np.mean((m - o) ** 2) / (np.mean(m) * np.mean(o)) if np.mean(m) * np.mean(o) != 0 else np.nan
+
+    return {"n": len(o), "rmse": rmse, "mae": mae, "sesgo": sesgo, "ioa": ioa, "fb": fb, "nmse": nmse, "r2": r2}
 
 
 def validar_wrf(config_path):
@@ -64,9 +68,9 @@ def validar_wrf(config_path):
     fig, axes = plt.subplots(3, 1, figsize=(12, 15), sharex=True)
 
     variables = {
-        "T2": {"wrf_var": "T2", "units": "K", "obs_col": "t2", "ax": axes[0], "title": "Temperatura 2m (K)"},
-        "WS10": {"wrf_var": "wspd10", "units": "m/s", "obs_col": "ws10", "ax": axes[1], "title": "Vel. Viento 10m (m/s)"},
-        "WD10": {"wrf_var": "wdir10", "units": "deg", "obs_col": "wd10", "ax": axes[2], "title": "Dir. Viento 10m (deg)"},
+        "T2": {"wrf_var": "T2", "units": "K", "obs_col": "t2", "ax": axes[0], "title": "Temperatura 2m (K)", "convert": lambda x: x - 273.15},
+        "WS10": {"wrf_var": "U10_V10_wspd", "units": "m/s", "obs_col": "ws10", "ax": axes[1], "title": "Vel. Viento 10m (m/s)", "convert": lambda x: x},
+        "WD10": {"wrf_var": "U10_V10_wdir", "units": "deg", "obs_col": "wd10", "ax": axes[2], "title": "Dir. Viento 10m (deg)", "convert": lambda x: x},
     }
 
     if obs_file.exists():
@@ -82,10 +86,23 @@ def validar_wrf(config_path):
 
     for var, cfg_var in variables.items():
         ax = cfg_var["ax"]
-        wrf_var = ds[cfg_var["wrf_var"]]
 
-        # Promedio espacial (punto mas cercano al centro)
-        wrf_ts = wrf_var.isel(south_north=30, west_east=30).to_pandas()
+        # WRF outputs U10/V10, not wspd10/wdir10 — compute from components
+        if cfg_var["wrf_var"] == "U10_V10_wspd":
+            u10 = ds["U10"].isel(south_north=30, west_east=30).to_pandas()
+            v10 = ds["V10"].isel(south_north=30, west_east=30).to_pandas()
+            wrf_ts = np.sqrt(u10**2 + v10**2)
+        elif cfg_var["wrf_var"] == "U10_V10_wdir":
+            u10 = ds["U10"].isel(south_north=30, west_east=30).to_pandas()
+            v10 = ds["V10"].isel(south_north=30, west_east=30).to_pandas()
+            wrf_ts = (270.0 - np.degrees(np.arctan2(v10, u10))) % 360.0
+        else:
+            wrf_var = ds[cfg_var["wrf_var"]]
+            wrf_ts = wrf_var.isel(south_north=30, west_east=30).to_pandas()
+
+        # Convert WRF units to obs units if needed
+        if "convert" in cfg_var:
+            wrf_ts = cfg_var["convert"](wrf_ts)
 
         ax.plot(wrf_ts.index, wrf_ts.values, "b-", alpha=0.7, label="WRF", linewidth=0.5)
 
@@ -103,7 +120,8 @@ def validar_wrf(config_path):
 
             ax.text(0.02, 0.95,
                     f"RMSE={metrics['rmse']:.2f}  MAE={metrics['mae']:.2f}\n"
-                    f"Sesgo={metrics['sesgo']:.2f}  IOA={metrics['ioa']:.2f}  R2={metrics['r2']:.2f}  N={metrics['n']}",
+                    f"Sesgo={metrics['sesgo']:.2f}  IOA={metrics['ioa']:.2f}\n"
+                    f"FB={metrics['fb']:.2f}  NMSE={metrics['nmse']:.2f}  R2={metrics['r2']:.2f}  N={metrics['n']}",
                     transform=ax.transAxes, fontsize=8, verticalalignment="top",
                     bbox=dict(boxstyle="round", facecolor="white", alpha=0.8))
 
@@ -133,7 +151,7 @@ def validar_wrf(config_path):
 
         # Tabla LaTeX para informe
         latex_file = out_dir / "metricas_validacion.tex"
-        latex = df_metrics[["variable", "n", "rmse", "mae", "sesgo", "ioa", "r2"]].to_latex(
+        latex = df_metrics[["variable", "n", "rmse", "mae", "sesgo", "ioa", "fb", "nmse", "r2"]].to_latex(
             index=False, float_format="%.2f", caption="Metricas de validacion WRF vs observaciones",
             label="tab:validacion_wrf"
         )

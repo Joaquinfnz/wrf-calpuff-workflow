@@ -33,7 +33,7 @@ def download_era5(config_path):
         sys.exit(1)
 
     uid, api_key = cds_key.split(":", 1)
-    cds_config = f"{cds_url}\n{uid}:{api_key}"
+    cds_config = f"url: {cds_url}\nkey: {uid}:{api_key}"
     cdsrc = Path.home() / ".cdsapirc"
     cdsrc.write_text(cds_config)
     cdsrc.chmod(0o600)
@@ -78,7 +78,7 @@ c.retrieve('reanalysis-era5-complete', {{
     'format': 'grib',
 }}, '{outfile}')
 
-print(f'[OK] Descargado {{outfile}}')
+print(f'[OK] Descargado {outfile}')
 """
 
         max_retries = 5
