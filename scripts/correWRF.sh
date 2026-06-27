@@ -1,22 +1,29 @@
 #!/bin/bash
 # =============================================================================
-# correWRF.sh — Lanza la cadena meteorologica en AWS hasta CALMET.DAT, desatendido.
+# correWRF.sh — Lanza la cadena meteorologica en AWS hasta CALMET.DAT,
+#               desatendido y resiliente para corridas de varios dias.
 #
 # Arquitectura: ERA5 -> WPS -> WRF -> CALWRF -> CALMET corren en AWS.
 # CALPUFF (dispersion) + post corren en la Mac sobre CALMET.DAT.
-# "Lo lanzo y listo": chequea el setup, valida la config y corre Snakemake en tmux.
+#
+# Resiliencia ("lo lanzo una vez y no para hasta terminar"):
+#   - tmux: sobrevive a desconexiones SSH / cierre del terminal.
+#   - bucle de reintento: si un paso se cae, Snakemake reanuda desde el
+#     ultimo checkpoint (--rerun-incomplete). WRF tiene restart cada 6h.
+#   - corta-circuito: 3 fallos rapidos seguidos (<2 min) = error de config,
+#     no transitorio -> aborta para no gastar credito de mas.
 #
 # Uso (en el servidor, dentro del repo):
 #   export CDSAPI_KEY='<tu-token-CDS>'
 #   bash scripts/correWRF.sh
 #
 # Monitoreo:  tmux attach -t wrf   |   tail -f correwrf.log
-# Al terminar: data/calmet/calmet.dat -> bajar a la Mac con scripts/sync_wrf.sh
 # =============================================================================
-set -euo pipefail
+set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 WF="$(dirname "$SCRIPT_DIR")"
+SELF="$SCRIPT_DIR/correWRF.sh"
 cd "$WF"
 
 G='\033[0;32m'; Y='\033[1;33m'; R='\033[0;31m'; N='\033[0m'
@@ -27,6 +34,37 @@ err(){  echo -e "${R}[ERROR]${N} $1"; }
 TARGET="data/calmet/calmet.dat"   # meteorologia "lista para CALPUFF"
 SESSION="wrf"
 
+# ── Modo interno: bucle de reintento auto-reanudable (corre dentro de tmux) ──
+if [ "${1:-}" = "__loop" ]; then
+    CORES=$(nproc)
+    fastfail=0
+    while [ ! -f "$TARGET" ]; do
+        snakemake --unlock >/dev/null 2>&1 || true   # limpiar lock de una caida previa
+        t0=$SECONDS
+        info "[$(date '+%F %T')] Iniciando/reanudando Snakemake -> $TARGET"
+        if snakemake --cores "$CORES" --keep-going --rerun-incomplete --latency-wait 120 "$TARGET"; then
+            info "[$(date '+%F %T')] PIPELINE COMPLETO. CALMET.DAT listo."
+            exit 0
+        fi
+        dur=$((SECONDS - t0))
+        if [ "$dur" -lt 120 ]; then
+            fastfail=$((fastfail + 1))
+            warn "[$(date '+%F %T')] Fallo rapido (${dur}s) — $fastfail/3"
+            if [ "$fastfail" -ge 3 ]; then
+                err "3 fallos rapidos seguidos = error de config/setup (no transitorio)."
+                err "Abortando para no gastar credito. Revisa correwrf.log y data/wrf/rsl.error.0000"
+                exit 1
+            fi
+        else
+            fastfail=0
+            warn "[$(date '+%F %T')] Interrupcion tras ${dur}s. Reanudando en 60s desde el checkpoint..."
+        fi
+        sleep 60
+    done
+    info "[$(date '+%F %T')] $TARGET ya existe. Nada que hacer."
+    exit 0
+fi
+
 # ── 1. Chequeos de setup ────────────────────────────────────────────────────
 [ -f config.yaml ] || { err "Falta config.yaml en $WF"; exit 1; }
 for img in "wrf-wps:4.6" "calpuff:7"; do
@@ -35,7 +73,7 @@ for img in "wrf-wps:4.6" "calpuff:7"; do
 done
 [ -f /data/WPS_GEOG/GEOGRID.TBL ] || {
     err "Falta WPS_GEOG en /data/WPS_GEOG. Corre primero: bash scripts/setup_server.sh"; exit 1; }
-: "${CDSAPI_KEY:?Define CDSAPI_KEY (token CDS) antes de correr: export CDSAPI_KEY=...}"
+: "${CDSAPI_KEY:?Define CDSAPI_KEY (token CDS): export CDSAPI_KEY=...}"
 command -v tmux >/dev/null 2>&1 || { err "tmux no esta instalado"; exit 1; }
 command -v snakemake >/dev/null 2>&1 || { info "Instalando snakemake..."; pip3 install --user -q snakemake; }
 
@@ -44,7 +82,7 @@ NP=$(python3 -c "import yaml;print(yaml.safe_load(open('config.yaml'))['docker']
 info "Cores disponibles: $CORES | WRF mpirun -np: $NP | objetivo: $TARGET"
 [ "$NP" -gt "$CORES" ] && warn "nprocs ($NP) > cores ($CORES): ajusta docker.build.nprocs en config.yaml"
 
-# ── 2. Validar config contra la Guia SEA (no fatal: un benchmark corto debe poder correr) ──
+# ── 2. Validar config contra la Guia SEA (no fatal: permite benchmarks cortos) ──
 python3 workflow/scripts/check_config.py config.yaml || warn "check_config con observaciones (revisa arriba)"
 
 # ── 3. No duplicar si ya hay una corrida en curso ──────────────────────────
@@ -53,11 +91,10 @@ if tmux has-session -t "$SESSION" 2>/dev/null; then
     exit 0
 fi
 
-# ── 4. Lanzar desatendido (resumible ante caidas/checkpoints) ──────────────
-tmux new-session -d -s "$SESSION" \
-    "snakemake --cores $CORES --keep-going --rerun-incomplete --latency-wait 60 $TARGET 2>&1 | tee correwrf.log"
+# ── 4. Lanzar el bucle resiliente dentro de tmux (sobrevive a la desconexion SSH) ──
+tmux new-session -d -s "$SESSION" "bash '$SELF' __loop 2>&1 | tee -a correwrf.log"
 
-info "Lanzado en tmux '$SESSION'."
+info "Lanzado en tmux '$SESSION' (corre aunque cierres la sesion SSH)."
 info "  Monitorear:  tmux attach -t $SESSION   (salir sin cortar: Ctrl+B luego D)"
 info "  Log:         tail -f correwrf.log"
-info "  Al terminar: data/calmet/calmet.dat listo -> bajar a la Mac con scripts/sync_wrf.sh"
+info "  Al terminar: data/calmet/calmet.dat -> baja a la Mac con scripts/sync_wrf.sh"

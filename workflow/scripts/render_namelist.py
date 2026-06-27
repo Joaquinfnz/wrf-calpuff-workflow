@@ -73,7 +73,6 @@ def render_namelists(config_path):
         "namelist.wps": "data/wps/namelist.wps",
         "namelist.input": "data/wrf/namelist.input",
         "calmet.inp": "data/calmet/calmet.inp",
-        "calpuff.inp": "data/calpuff/calpuff.inp",
     }
 
     env = Environment(loader=BaseLoader())

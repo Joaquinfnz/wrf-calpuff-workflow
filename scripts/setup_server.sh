@@ -78,6 +78,10 @@ sudo systemctl enable docker --now
 sudo usermod -aG docker "$USER"
 log_info "Docker configurado (re-login para usar sin sudo)"
 
+# Evitar que el SO se reinicie por updates automaticos durante una corrida de varios dias
+echo 'Unattended-Upgrade::Automatic-Reboot "false";' | sudo tee /etc/apt/apt.conf.d/99-no-auto-reboot >/dev/null
+log_info "Reinicio automatico por updates deshabilitado (corridas largas seguras)"
+
 # ── 3. Crear estructura de directorios ────────────────────────────────────
 log_step "Paso 3/7: Creando directorios de datos"
 

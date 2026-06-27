@@ -49,3 +49,7 @@ secrets.env
 .vscode/
 *.swp
 *.swo
+
+# Python
+__pycache__/
+*.pyc

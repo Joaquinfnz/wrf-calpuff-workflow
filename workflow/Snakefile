@@ -50,11 +50,11 @@ else:
 
 # ── Reglas ───────────────────────────────────────────────────────────────────
 
+# Alcance del repo = SOLO servidor: termina en CALMET.DAT (la meteorologia "lista").
+# CALPUFF (dispersion) + post-proceso SEIA corren en la Mac sobre CALMET.DAT.
 rule all:
     input:
-        f"{OUTPUT_DIR}/tablas/concentraciones_vs_norma.xlsx",
-        f"{OUTPUT_DIR}/mapas/isoconcentracion_mp10_24h.png",
-        f"{OUTPUT_DIR}/memoria_calculo.md",
+        "data/calmet/calmet.dat",
         f"{OUTPUT_DIR}/validacion/validacion_wrf.png",
 
 
@@ -86,8 +86,7 @@ rule render_namelists:
     output:
         "data/wps/namelist.wps",
         "data/wrf/namelist.input",
-        "data/calmet/calmet.inp",
-        "data/calpuff/calpuff.inp"
+        "data/calmet/calmet.inp"
     shell:
         "python3 workflow/scripts/render_namelist.py config.yaml"
 
@@ -239,26 +238,7 @@ rule calmet:
         """
 
 
-# ── 9. CALPUFF ──────────────────────────────────────────────────────────────
-
-rule calpuff:
-    input:
-        "data/calmet/calmet.dat",
-        "data/calpuff/calpuff.inp",
-        "emisiones.csv"
-    output:
-        "data/calpuff/conc.dat"
-    shell:
-        """
-        docker run --rm \
-            -v $(pwd)/data:/data \
-            -v $(pwd)/emisiones.csv:/data/calpuff/emisiones.csv \
-            {CALPUFF_IMAGE} \
-            bash -o pipefail -c "cd /data/calpuff && calpuff.exe calpuff.inp 2>&1 | tee calpuff.log"
-        """
-
-
-# ── 10. Validacion WRF vs observaciones ─────────────────────────────────────
+# ── 9. Validacion WRF vs observaciones ─────────────────────────────────────
 
 rule validar_wrf:
     input:
@@ -272,27 +252,5 @@ rule validar_wrf:
         """
 
 
-# ── 11. Post-procesamiento SEIA ─────────────────────────────────────────────
-
-rule postprocesar_seia:
-    input:
-        "data/calpuff/conc.dat",
-        "receptores.csv",
-        "emisiones.csv"
-    output:
-        f"{OUTPUT_DIR}/tablas/concentraciones_vs_norma.xlsx",
-        f"{OUTPUT_DIR}/mapas/isoconcentracion_mp10_24h.png",
-        f"{OUTPUT_DIR}/memoria_calculo.md"
-    shell:
-        """
-        mkdir -p {OUTPUT_DIR}/tablas {OUTPUT_DIR}/mapas
-        python3 workflow/scripts/postprocesar_seia.py config.yaml
-        mkdir -p {OUTPUT_DIR}/namelists
-        cp data/wps/namelist.wps data/wrf/namelist.input \
-           data/calmet/calmet.inp data/calpuff/calpuff.inp \
-           {OUTPUT_DIR}/namelists/
-        mkdir -p {OUTPUT_DIR}/calpuff
-        cp data/calmet/calmet.dat data/calpuff/conc.dat \
-           data/calmet/calmet.log data/calpuff/calpuff.log \
-           {OUTPUT_DIR}/calpuff/
-        """
+# CALPUFF + post-proceso SEIA ya NO viven aqui: corren en la Mac sobre CALMET.DAT.
+# Ver el repositorio/carpeta local de post-proceso.
