@@ -5,9 +5,9 @@
 
 # ── Proyecto ─────────────────────────────────────────────────────────────────
 proyecto:
-  nombre: "Sin Nombre"
-  descripcion: ""
-  consultora: ""
+  nombre: "Aridos Rio Blanco Curacautin"
+  descripcion: "Modelacion MP10/MP2.5 - respuesta ICSARA, DIA extraccion de aridos"
+  consultora: "Rocks Geoconsulting"
 
 # ── Dominios WRF ─────────────────────────────────────────────────────────────
 # Se modelan 3 dominios anidados two-way nesting
@@ -18,7 +18,7 @@ wrf:
   interval_seconds: 21600  # ERA5 cada 6h
   e_vert: 40               # Niveles verticales
   p_top_requested: 5000    # Tope en Pa
-  num_metgrid_levels: 34   # Niveles desde ERA5
+  num_metgrid_levels: 38   # 37 niveles de presion ERA5 + 1 superficie
 
   # Parametrizaciones fisicas (Falvey/Schmitz, validado sur de Chile)
   physics:
@@ -70,12 +70,12 @@ wrf:
   # Proyeccion — Lambert conformal conic
   map_proj: "lambert"
 
-  # Coordenadas del centro del dominio (modificar segun proyecto)
-  ref_lat: -41.115
-  ref_lon: -73.041
-  truelat1: -33.417
-  truelat2: -35.048
-  stand_lon: -73.041
+  # Centro del dominio — Curacautin, Rio Blanco (AJUSTAR al centroide del layout del titular)
+  ref_lat: -38.44
+  ref_lon: -71.88
+  truelat1: -37.0
+  truelat2: -40.0
+  stand_lon: -71.88
   geog_data_res: ["30s", "30s", "30s"]
 
 # ── Periodo de modelacion ────────────────────────────────────────────────────
@@ -89,13 +89,12 @@ periodo:
 
 # ── ERA5 Download (CDS API) ──────────────────────────────────────────────
 era5:
-  area: [-38, -76, -45, -69]  # [N, W, S, E] — cubre sur de Chile
+  area: [-36, -74, -41, -70]  # [N, W, S, E] — cubre los 3 dominios sobre Curacautin
   grid: [0.25, 0.25]          # Resolucion ERA5
-  pressure_levels: "1000/975/950/925/900/850/800/700/600/500/400/300/200/100/50"
-  variables_surface: "10m_u_component_of_wind/10m_v_component_of_wind/2m_temperature/2m_dewpoint_temperature/mean_sea_level_pressure/sea_surface_temperature/skin_temperature"
-  variables_pressure: "geopotential/temperature/u_component_of_wind/v_component_of_wind/relative_humidity"
-  cds_api_key: ""             # Key de CDS (setear en variable de entorno CDSAPI_KEY)
-  cds_api_url: "https://cds.climate.copernicus.eu/api/v2"
+  # NOTA: las variables y niveles los define download_era5.py (37 niveles ERA5,
+  # pressure-levels + single-levels). Estos campos quedan solo como referencia.
+  cds_api_key: ""             # Token CDS (mejor via variable de entorno CDSAPI_KEY)
+  cds_api_url: "https://cds.climate.copernicus.eu/api"  # CDS nuevo (PAT). El /api/v2 fue retirado.
 
 # ── CALMET ───────────────────────────────────────────────────────────────────
 calmet:
@@ -143,24 +142,24 @@ emisiones:
 
 # ── Normas de calidad del aire (DS 38/2011, DS 104/2018) ─────────────────────
 normas:
-  MP10:
-    anual: 50    # ug/m3, DS 38/2011
-    diaria: 150  # ug/m3, percentil 98, DS 38/2011
-  MP2_5:
-    anual: 20    # ug/m3, DS 104/2018
-    diaria: 50   # ug/m3, percentil 98, DS 104/2018
-  SO2:
-    anual: 80    # ug/m3, DS 38/2011
-    diaria: 310  # ug/m3, percentil 99, DS 38/2011
-    horaria: 544 # ug/m3, percentil 99.73, DS 38/2011
-  NO2:
-    anual: 100   # ug/m3, DS 38/2011
-    horaria: 400 # ug/m3, percentil 99.79, DS 38/2011
-  CO:
-    horaria: 30000  # ug/m3, percentil 99, DS 115/2002
-    octohoraria: 10000  # ug/m3, DS 115/2002
-  O3:
-    octohoraria: 127  # ug/m3, percentil 99, DS 112/2002
+  MP10:               # DS 12/2022 MMA (reemplaza DS 59/1998)
+    anual: 50    # ug/m3N, promedio 3 anios
+    diaria: 130  # ug/m3N, percentil 98
+  MP2_5:              # DS 12/2011 MMA
+    anual: 20    # ug/m3N
+    diaria: 50   # ug/m3N, percentil 98
+  SO2:                # DS 104/2018 MMA (reemplaza DS 113/2002)
+    anual: 60    # ug/m3N (23 ppbv), promedio 3 anios
+    horaria: 350 # ug/m3N (134 ppbv), percentil 98,5
+  NO2:                # DS 40/2024 MMA (reemplaza DS 114/2002)
+    anual: 40    # ug/m3N
+    diaria: 100  # ug/m3N
+    horaria: 200 # ug/m3N (OMS 2021)
+  CO:                 # DS 115/2002 MINSEGPRES
+    horaria: 30000     # ug/m3N
+    octohoraria: 10000 # ug/m3N
+  O3:                 # DS 112/2002 MINSEGPRES
+    octohoraria: 120  # ug/m3N, percentil 99
 
 # ── Validacion meteorologica ─────────────────────────────────────────────────
 # Requisito SEA: comparar WRF vs observaciones >= 1 año

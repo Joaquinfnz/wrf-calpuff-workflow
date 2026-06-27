@@ -134,11 +134,13 @@ rule ungrib:
         FILE_PREFIX
     shell:
         """
+        # Enlazar la Vtable de ERA5 (pl+sfc) que ungrib necesita
+        cp static/Vtable.ERA5 data/wps/Vtable
         docker run --rm \
             -v $(pwd)/data:/data \
             {WRF_IMAGE} \
             bash -o pipefail -c "cd /data/wps && \
-                for f in ../raw/ERA5_*.grib; do ln -sf ../raw/$(basename $f) GRIBFILE.$(basename $f .grib | sed 's/ERA5_[0-9]*_//'); done && \
+                /opt/wps/link_grib.csh ../raw/ERA5_*.grib && \
                 ungrib.exe 2>&1 | tee ungrib.log"
         """
 

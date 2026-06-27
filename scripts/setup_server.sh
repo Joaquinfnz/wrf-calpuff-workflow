@@ -122,24 +122,24 @@ log_info "Imagen CALPUFF construida: $CALPUFF_IMAGE"
 # ── 6. Descargar WPS_GEOG ──────────────────────────────────────────────────
 log_step "Paso 7/7: Descargando datos estaticos WPS_GEOG"
 
-WPS_GEOG_TARBALL="wps_geog_minimum.tar.gz"
-WPS_GEOG_URL="https://www2.mmm.ucar.edu/wrf/src/wps_files/geog_minimum.tar.bz2"
+# Alta resolucion (30s) — obligatorio para 1 km en terreno complejo (precordillera andina)
+WPS_GEOG_URL="https://www2.mmm.ucar.edu/wrf/src/wps_files/geog_high_res_mandatory.tar.gz"
 
 if [ -f "$WPS_GEOG_DIR/GEOGRID.TBL" ]; then
     log_info "WPS_GEOG ya existe en $WPS_GEOG_DIR"
 else
-    log_info "Descargando WPS_GEOG (datos minimos, ~500 MB)..."
+    log_info "Descargando WPS_GEOG alta resolucion 30s (~2.6 GB)..."
     cd /tmp
-    wget -q --show-progress "$WPS_GEOG_URL" -O geog_minimum.tar.bz2 || {
+    wget -q --show-progress "$WPS_GEOG_URL" -O geog_highres.tar.gz || {
         log_warn "No se pudo descargar WPS_GEOG automaticamente."
         log_warn "Descargalo manualmente de: https://www2.mmm.ucar.edu/wrf/src/wps_files/"
-        log_warn "y extraelo en: $WPS_GEOG_DIR"
+        log_warn "(geog_high_res_mandatory.tar.gz) y extraelo en: $WPS_GEOG_DIR"
     }
-    if [ -f geog_minimum.tar.bz2 ]; then
-        sudo tar -xjf geog_minimum.tar.bz2 -C "$WPS_GEOG_DIR" --strip-components=1
+    if [ -f geog_highres.tar.gz ]; then
+        sudo tar -xzf geog_highres.tar.gz -C "$WPS_GEOG_DIR" --strip-components=1
         sudo chown -R "$USER:$USER" "$WPS_GEOG_DIR"
-        rm geog_minimum.tar.bz2
-        log_info "WPS_GEOG descargado y extraido"
+        rm geog_highres.tar.gz
+        log_info "WPS_GEOG (30s) descargado y extraido"
     fi
     cd "$WORKFLOW_DIR"
 fi
