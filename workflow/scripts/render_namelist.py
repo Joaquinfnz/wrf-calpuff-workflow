@@ -25,8 +25,8 @@ def render_namelists(config_path):
     wrf = cfg["wrf"]
     periodo = cfg["periodo"]
     proyecto = cfg["proyecto"]
-    calmet = cfg["calmet"]
-    calpuff = cfg["calpuff"]
+    calmet = cfg.get("calmet", {})
+    calpuff = cfg.get("calpuff", {})
     rutas = cfg["rutas"]
     validacion = cfg.get("validacion", {})
 
@@ -38,6 +38,11 @@ def render_namelists(config_path):
     inicio_time = datetime.strptime(inicio_str[1], "%H:%M:%S")
     fin_dt = datetime.strptime(fin_str[0], "%Y-%m-%d")
     fin_time = datetime.strptime(fin_str[1], "%H:%M:%S")
+
+    # Duracion total de la corrida WRF (para run_days/run_hours en namelist.input)
+    ini_full = datetime.combine(inicio_dt.date(), inicio_time.time())
+    fin_full = datetime.combine(fin_dt.date(), fin_time.time())
+    dur = fin_full - ini_full
 
     ctx = {
         "wrf": wrf,
@@ -60,11 +65,8 @@ def render_namelists(config_path):
         "fin_hour": fin_time.hour,
         "fin_minute": fin_time.minute,
         "fin_second": fin_time.second,
-        # CALMET extra params
-        "utm_zone": 18,
-        "utm_offset": -4.0,
-        "calmet_xorig": -10.0,
-        "calmet_yorig": -10.0,
+        "run_days": dur.days,
+        "run_hours": dur.seconds // 3600,
     }
 
     # ── Templates ───────────────────────────────────────────────────────────
@@ -72,9 +74,7 @@ def render_namelists(config_path):
     templates = {
         "namelist.wps": "data/wps/namelist.wps",
         "namelist.input": "data/wrf/namelist.input",
-        "calmet.inp": "data/calmet/calmet.inp",
-        "calpuff.inp": "data/calpuff/calpuff.inp",
-    }
+    }  # Solo servidor: WRF. CALMET/CALPUFF se generan en la PC.
 
     env = Environment(loader=BaseLoader())
 

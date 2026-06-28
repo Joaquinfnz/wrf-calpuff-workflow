@@ -4,8 +4,8 @@
 # Requisito SEA: debe entregarse en la evaluacion
 # =============================================================================
 &time_control
- run_days                 = 0,
- run_hours                = 0,
+ run_days                 = {{ run_days }},
+ run_hours                = {{ run_hours }},
  run_minutes              = 0,
  run_seconds              = 0,
  start_year               = {% for d in range(wrf.max_dom) %}{{ inicio_year }},{% endfor %}
@@ -24,7 +24,7 @@
  input_from_file          = {% for d in range(wrf.max_dom) %}.true.,{% endfor %}
  history_interval         = {% for h in wrf.history_interval %}{{ h }},{% endfor %}
  frames_per_outfile       = {% for f in wrf.frames_per_outfile %}{{ f }},{% endfor %}
- restart                  = .true.,
+ restart                  = .false.,
  restart_interval         = {{ wrf.restart_interval }},
  io_form_history          = 2,
  io_form_restart          = 2,

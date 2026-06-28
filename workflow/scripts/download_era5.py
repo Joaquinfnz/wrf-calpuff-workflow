@@ -1,16 +1,86 @@
 #!/usr/bin/env python3
 """
-download_era5.py — Descarga datos ERA5 desde CDS API
-Soporta descarga por mes con retries automáticos.
-CDS API key desde variable de entorno CDSAPI_KEY o .env
+download_era5.py — Descarga ERA5 para WRF/WPS desde el Climate Data Store (CDS).
+
+Baja los DOS datasets estandar que WPS/ungrib necesita y los concatena en un
+solo GRIB por mes (ungrib lee todos los mensajes de un archivo):
+  - reanalysis-era5-pressure-levels  -> campos 3D (geopotencial, T, U, V, HR, q)
+  - reanalysis-era5-single-levels    -> superficie + suelo (4 capas) + SST + mascara
+
+Salida: data/raw/ERA5_{anio}_{mes:02d}.grib  (nombre que espera el Snakefile).
+
+CDS nuevo (migracion 2024): endpoint https://cds.climate.copernicus.eu/api con un
+unico Token de Acceso Personal (PAT). El viejo /api/v2 (uid:key) fue retirado.
+Token en: https://cds.climate.copernicus.eu/profile
 """
 
 import os
 import sys
-import yaml
 import time
-import subprocess
+import yaml
+import calendar
 from pathlib import Path
+
+import cdsapi
+
+# 37 niveles de presion estandar de ERA5 (hPa). => num_metgrid_levels = 38 (37 + sup).
+PRESSURE_LEVELS = [
+    "1000", "975", "950", "925", "900", "875", "850", "825", "800", "775",
+    "750", "700", "650", "600", "550", "500", "450", "400", "350", "300",
+    "250", "225", "200", "175", "150", "125", "100", "70", "50", "30",
+    "20", "10", "7", "5", "3", "2", "1",
+]
+
+# Campos 3D en niveles de presion (nombres CDS)
+PL_VARS = [
+    "geopotential", "temperature",
+    "u_component_of_wind", "v_component_of_wind",
+    "relative_humidity", "specific_humidity",
+]
+
+# Superficie + suelo que real.exe necesita (sin esto la corrida queda incompleta)
+SFC_VARS = [
+    "10m_u_component_of_wind", "10m_v_component_of_wind",
+    "2m_temperature", "2m_dewpoint_temperature",
+    "mean_sea_level_pressure", "surface_pressure",
+    "sea_surface_temperature", "skin_temperature",
+    "soil_temperature_level_1", "soil_temperature_level_2",
+    "soil_temperature_level_3", "soil_temperature_level_4",
+    "volumetric_soil_water_layer_1", "volumetric_soil_water_layer_2",
+    "volumetric_soil_water_layer_3", "volumetric_soil_water_layer_4",
+    "land_sea_mask", "sea_ice_cover", "snow_depth",
+    "geopotential",  # geopotencial de superficie (orografia), invariante pero requerido
+]
+
+NEW_CDS_URL = "https://cds.climate.copernicus.eu/api"
+
+
+def _ensure_cdsapirc(cfg_era5):
+    """Escribe ~/.cdsapirc desde CDSAPI_KEY/config, o usa el existente."""
+    key = os.environ.get("CDSAPI_KEY", cfg_era5.get("cds_api_key", "")).strip()
+    url = (cfg_era5.get("cds_api_url") or NEW_CDS_URL).strip()
+    if not key:
+        if (Path.home() / ".cdsapirc").exists():
+            return
+        print("[ERROR] Falta el token CDS.")
+        print("  export CDSAPI_KEY='<tu-token-de-acceso-personal>'")
+        print("  Token en: https://cds.climate.copernicus.eu/profile")
+        sys.exit(1)
+    rc = Path.home() / ".cdsapirc"
+    rc.write_text(f"url: {url}\nkey: {key}\n")
+    rc.chmod(0o600)
+
+
+def _retrieve(client, dataset, request, target, max_retries=5):
+    for attempt in range(1, max_retries + 1):
+        try:
+            client.retrieve(dataset, request, str(target))
+            return
+        except Exception as e:  # cdsapi lanza varias; reintentar con backoff
+            print(f"  [RETRY {attempt}/{max_retries}] {dataset}: {e}")
+            time.sleep(30 * attempt)
+    print(f"  [FAIL] No se pudo descargar {dataset} -> {target}")
+    sys.exit(1)
 
 
 def download_era5(config_path):
@@ -20,86 +90,50 @@ def download_era5(config_path):
     anio = cfg["periodo"]["anio"]
     meses = cfg["periodo"]["meses"]
     era5 = cfg["era5"]
-    raw_dir = Path("data/raw")
+    area = era5["area"]   # [N, W, S, E]
+    grid = era5["grid"]   # [dlat, dlon]
+    raw = Path("data/raw")
+    raw.mkdir(parents=True, exist_ok=True)
 
-    # ── Obtener credenciales CDS ────────────────────────────────────────────
-    cds_key = os.environ.get("CDSAPI_KEY", era5.get("cds_api_key", ""))
-    cds_url = era5.get("cds_api_url", "https://cds.climate.copernicus.eu/api/v2")
+    _ensure_cdsapirc(era5)
+    c = cdsapi.Client()
 
-    if not cds_key:
-        print("[ERROR] CDSAPI_KEY no configurada.")
-        print("  export CDSAPI_KEY='uid:api-key'")
-        print("  Obten tu key en: https://cds.climate.copernicus.eu/user")
-        sys.exit(1)
-
-    uid, api_key = cds_key.split(":", 1)
-    cds_config = f"url: {cds_url}\nkey: {uid}:{api_key}"
-    cdsrc = Path.home() / ".cdsapirc"
-    cdsrc.write_text(cds_config)
-    cdsrc.chmod(0o600)
-
-    # ── Meses en español → número ──────────────────────────────────────────
-    meses_nombre = {
-        1: "january", 2: "february", 3: "march",
-        4: "april", 5: "may", 6: "june",
-        7: "july", 8: "august", 9: "september",
-        10: "october", 11: "november", 12: "december"
-    }
-
-    # ── Bajar datos por mes ─────────────────────────────────────────────────
     for mes in meses:
-        outfile = raw_dir / f"ERA5_{anio}_{mes}.grib"
-        if outfile.exists():
-            print(f"[SKIP] {outfile} ya existe")
+        final = raw / f"ERA5_{anio}_{mes:02d}.grib"
+        if final.exists():
+            print(f"[SKIP] {final} ya existe")
             continue
 
-        print(f"[DOWNLOAD] ERA5 {anio}-{mes:02d}")
-
-        # Calcular días del mes
-        import calendar
         ndias = calendar.monthrange(anio, mes)[1]
+        dias = [f"{d:02d}" for d in range(1, ndias + 1)]
+        horas = [f"{h:02d}:00" for h in range(0, 24, 6)]  # 6-horario para WPS
+        print(f"[DOWNLOAD] ERA5 {anio}-{mes:02d} ({ndias} dias x {len(horas)} h)")
 
-        script = f"""
-import cdsapi
-c = cdsapi.Client()
+        pl = raw / f"ERA5_{anio}_{mes:02d}_pl.grib"
+        sfc = raw / f"ERA5_{anio}_{mes:02d}_sfc.grib"
 
-c.retrieve('reanalysis-era5-complete', {{
-    'class': 'ea',
-    'date': '{anio}-{mes:02d}-01/to/{anio}-{mes:02d}-{ndias}',
-    'expver': '1',
-    'levtype': 'ml',
-    'levelist': '{era5["pressure_levels"]}',
-    'param': '60/129/130/131/132/133/157',
-    'stream': 'oper',
-    'time': '00/to/23/by/6',
-    'type': 'an',
-    'area': {'/'.join(str(x) for x in era5['area'])},
-    'grid': {'/'.join(str(x) for x in era5['grid'])},
-    'format': 'grib',
-}}, '{outfile}')
+        _retrieve(c, "reanalysis-era5-pressure-levels", {
+            "product_type": "reanalysis",
+            "variable": PL_VARS,
+            "pressure_level": PRESSURE_LEVELS,
+            "year": str(anio), "month": f"{mes:02d}", "day": dias, "time": horas,
+            "area": area, "grid": grid, "data_format": "grib",
+        }, pl)
 
-print(f'[OK] Descargado {outfile}')
-"""
+        _retrieve(c, "reanalysis-era5-single-levels", {
+            "product_type": "reanalysis",
+            "variable": SFC_VARS,
+            "year": str(anio), "month": f"{mes:02d}", "day": dias, "time": horas,
+            "area": area, "grid": grid, "data_format": "grib",
+        }, sfc)
 
-        max_retries = 5
-        for attempt in range(max_retries):
-            try:
-                result = subprocess.run(
-                    ["python3", "-c", script],
-                    capture_output=True, text=True, timeout=3600
-                )
-                if result.returncode == 0:
-                    print(f"  [OK] {outfile}")
-                    break
-                else:
-                    print(f"  [RETRY {attempt+1}/{max_retries}] {result.stderr.strip()}")
-                    time.sleep(30 * (attempt + 1))
-            except subprocess.TimeoutExpired:
-                print(f"  [TIMEOUT] Reintentando... ({attempt+1}/{max_retries})")
-                time.sleep(60 * (attempt + 1))
-        else:
-            print(f"  [FAIL] Fallo descarga de ERA5 {anio}-{mes:02d}")
-            sys.exit(1)
+        # ungrib lee todos los mensajes de un GRIB -> concatenar sup + presion
+        with open(final, "wb") as out:
+            out.write(sfc.read_bytes())
+            out.write(pl.read_bytes())
+        pl.unlink()
+        sfc.unlink()
+        print(f"  [OK] {final}")
 
 
 if __name__ == "__main__":

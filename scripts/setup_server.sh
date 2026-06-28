@@ -25,7 +25,7 @@ GITHUB_BRANCH="${GITHUB_BRANCH:-main}"
 DATA_DIR="${DATA_DIR:-/data/wrf-calpuff}"
 WPS_GEOG_DIR="${WPS_GEOG_DIR:-/data/WPS_GEOG}"
 WRF_IMAGE="wrf-wps:4.6"
-CALPUFF_IMAGE="calpuff:7"
+CALWRF_IMAGE="calwrf:2.0.3"
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -78,6 +78,10 @@ sudo systemctl enable docker --now
 sudo usermod -aG docker "$USER"
 log_info "Docker configurado (re-login para usar sin sudo)"
 
+# Evitar que el SO se reinicie por updates automaticos durante una corrida de varios dias
+echo 'Unattended-Upgrade::Automatic-Reboot "false";' | sudo tee /etc/apt/apt.conf.d/99-no-auto-reboot >/dev/null
+log_info "Reinicio automatico por updates deshabilitado (corridas largas seguras)"
+
 # ── 3. Crear estructura de directorios ────────────────────────────────────
 log_step "Paso 3/7: Creando directorios de datos"
 
@@ -113,33 +117,33 @@ log_info "Construyendo wrf-wps:4.6 ..."
 docker build -t "$WRF_IMAGE" docker/wrf/ 2>&1 | tail -10
 log_info "Imagen WRF construida: $WRF_IMAGE"
 
-log_step "Paso 6/7: Construyendo imagen CALPUFF (~15 min)"
+log_step "Paso 6/7: Construyendo imagen CALWRF (compila desde fuente, ~5 min)"
 
-log_info "Construyendo $CALPUFF_IMAGE ..."
-docker build -t "$CALPUFF_IMAGE" docker/calpuff/ 2>&1 | tail -10
-log_info "Imagen CALPUFF construida: $CALPUFF_IMAGE"
+log_info "Construyendo $CALWRF_IMAGE ..."
+docker build -t "$CALWRF_IMAGE" docker/calwrf/ 2>&1 | tail -10
+log_info "Imagen CALWRF construida: $CALWRF_IMAGE"
 
 # ── 6. Descargar WPS_GEOG ──────────────────────────────────────────────────
 log_step "Paso 7/7: Descargando datos estaticos WPS_GEOG"
 
-WPS_GEOG_TARBALL="wps_geog_minimum.tar.gz"
-WPS_GEOG_URL="https://www2.mmm.ucar.edu/wrf/src/wps_files/geog_minimum.tar.bz2"
+# Alta resolucion (30s) — obligatorio para 1 km en terreno complejo (precordillera andina)
+WPS_GEOG_URL="https://www2.mmm.ucar.edu/wrf/src/wps_files/geog_high_res_mandatory.tar.gz"
 
 if [ -f "$WPS_GEOG_DIR/GEOGRID.TBL" ]; then
     log_info "WPS_GEOG ya existe en $WPS_GEOG_DIR"
 else
-    log_info "Descargando WPS_GEOG (datos minimos, ~500 MB)..."
+    log_info "Descargando WPS_GEOG alta resolucion 30s (~2.6 GB)..."
     cd /tmp
-    wget -q --show-progress "$WPS_GEOG_URL" -O geog_minimum.tar.bz2 || {
+    wget -q --show-progress "$WPS_GEOG_URL" -O geog_highres.tar.gz || {
         log_warn "No se pudo descargar WPS_GEOG automaticamente."
         log_warn "Descargalo manualmente de: https://www2.mmm.ucar.edu/wrf/src/wps_files/"
-        log_warn "y extraelo en: $WPS_GEOG_DIR"
+        log_warn "(geog_high_res_mandatory.tar.gz) y extraelo en: $WPS_GEOG_DIR"
     }
-    if [ -f geog_minimum.tar.bz2 ]; then
-        sudo tar -xjf geog_minimum.tar.bz2 -C "$WPS_GEOG_DIR" --strip-components=1
+    if [ -f geog_highres.tar.gz ]; then
+        sudo tar -xzf geog_highres.tar.gz -C "$WPS_GEOG_DIR" --strip-components=1
         sudo chown -R "$USER:$USER" "$WPS_GEOG_DIR"
-        rm geog_minimum.tar.bz2
-        log_info "WPS_GEOG descargado y extraido"
+        rm geog_highres.tar.gz
+        log_info "WPS_GEOG (30s) descargado y extraido"
     fi
     cd "$WORKFLOW_DIR"
 fi
@@ -163,16 +167,14 @@ python3 -m pip install --user --quiet \
 echo ""
 echo "╔══════════════════════════════════════════════════════════════╗"
 echo "║                                                              ║"
-echo "║   SETUP COMPLETO — WRF/CALPUFF Workflow                      ║"
-echo "║                                                              ║"
-echo "║   Imagenes Docker:                                           ║"
-echo "║     $WRF_IMAGE ($(docker image inspect $WRF_IMAGE --format='{{.Size}}' 2>/dev/null | awk '{printf "%.0f MB", $1/1024/1024}'))       ║"
-echo "║     $CALPUFF_IMAGE ($(docker image inspect $CALPUFF_IMAGE --format='{{.Size}}' 2>/dev/null | awk '{printf "%.0f MB", $1/1024/1024}'))    ║"
-echo "║                                                              ║"
-echo "║   Siguiente paso:                                            ║"
-echo "║     1. Edita config.yaml con tu dominio y fechas             ║"
-echo "║     2. Coloca tus binarios CALPUFF en la imagen              ║"
-echo "║     3. bash run.sh para lanzar la modelacion                 ║"
-echo "║                                                              ║"
-echo "╚══════════════════════════════════════════════════════════════╝"
+echo "   SETUP COMPLETO — Servidor WRF + CALWRF"
+echo ""
+echo "   Imagenes Docker:"
+echo "     $WRF_IMAGE   ($(docker image inspect $WRF_IMAGE --format='{{.Size}}' 2>/dev/null | awk '{printf "%.0f MB", $1/1024/1024}'))"
+echo "     $CALWRF_IMAGE ($(docker image inspect $CALWRF_IMAGE --format='{{.Size}}' 2>/dev/null | awk '{printf "%.0f MB", $1/1024/1024}'))"
+echo ""
+echo "   Siguiente paso:"
+echo "     1. python3 workflow/scripts/importar_kmz.py proyecto.kmz --apply config.yaml"
+echo "     2. export CDSAPI_KEY=...   (token del CDS)"
+echo "     3. bash scripts/correWRF.sh   (corre hasta 3D.DAT, en tmux)"
 echo ""
