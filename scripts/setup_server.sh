@@ -25,7 +25,7 @@ GITHUB_BRANCH="${GITHUB_BRANCH:-main}"
 DATA_DIR="${DATA_DIR:-/data/wrf-calpuff}"
 WPS_GEOG_DIR="${WPS_GEOG_DIR:-/data/WPS_GEOG}"
 WRF_IMAGE="wrf-wps:4.6"
-CALPUFF_IMAGE="calpuff:7"
+CALWRF_IMAGE="calwrf:2.0.3"
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -117,11 +117,11 @@ log_info "Construyendo wrf-wps:4.6 ..."
 docker build -t "$WRF_IMAGE" docker/wrf/ 2>&1 | tail -10
 log_info "Imagen WRF construida: $WRF_IMAGE"
 
-log_step "Paso 6/7: Construyendo imagen CALPUFF (~15 min)"
+log_step "Paso 6/7: Construyendo imagen CALWRF (compila desde fuente, ~5 min)"
 
-log_info "Construyendo $CALPUFF_IMAGE ..."
-docker build -t "$CALPUFF_IMAGE" docker/calpuff/ 2>&1 | tail -10
-log_info "Imagen CALPUFF construida: $CALPUFF_IMAGE"
+log_info "Construyendo $CALWRF_IMAGE ..."
+docker build -t "$CALWRF_IMAGE" docker/calwrf/ 2>&1 | tail -10
+log_info "Imagen CALWRF construida: $CALWRF_IMAGE"
 
 # ── 6. Descargar WPS_GEOG ──────────────────────────────────────────────────
 log_step "Paso 7/7: Descargando datos estaticos WPS_GEOG"
@@ -167,16 +167,14 @@ python3 -m pip install --user --quiet \
 echo ""
 echo "╔══════════════════════════════════════════════════════════════╗"
 echo "║                                                              ║"
-echo "║   SETUP COMPLETO — WRF/CALPUFF Workflow                      ║"
-echo "║                                                              ║"
-echo "║   Imagenes Docker:                                           ║"
-echo "║     $WRF_IMAGE ($(docker image inspect $WRF_IMAGE --format='{{.Size}}' 2>/dev/null | awk '{printf "%.0f MB", $1/1024/1024}'))       ║"
-echo "║     $CALPUFF_IMAGE ($(docker image inspect $CALPUFF_IMAGE --format='{{.Size}}' 2>/dev/null | awk '{printf "%.0f MB", $1/1024/1024}'))    ║"
-echo "║                                                              ║"
-echo "║   Siguiente paso:                                            ║"
-echo "║     1. Edita config.yaml con tu dominio y fechas             ║"
-echo "║     2. Coloca tus binarios CALPUFF en la imagen              ║"
-echo "║     3. bash run.sh para lanzar la modelacion                 ║"
-echo "║                                                              ║"
-echo "╚══════════════════════════════════════════════════════════════╝"
+echo "   SETUP COMPLETO — Servidor WRF + CALWRF"
+echo ""
+echo "   Imagenes Docker:"
+echo "     $WRF_IMAGE   ($(docker image inspect $WRF_IMAGE --format='{{.Size}}' 2>/dev/null | awk '{printf "%.0f MB", $1/1024/1024}'))"
+echo "     $CALWRF_IMAGE ($(docker image inspect $CALWRF_IMAGE --format='{{.Size}}' 2>/dev/null | awk '{printf "%.0f MB", $1/1024/1024}'))"
+echo ""
+echo "   Siguiente paso:"
+echo "     1. python3 workflow/scripts/importar_kmz.py proyecto.kmz --apply config.yaml"
+echo "     2. export CDSAPI_KEY=...   (token del CDS)"
+echo "     3. bash scripts/correWRF.sh   (corre hasta 3D.DAT, en tmux)"
 echo ""

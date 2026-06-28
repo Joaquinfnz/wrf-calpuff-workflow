@@ -1,11 +1,11 @@
 # =============================================================================
-# Snakefile — WRF → CALPUFF Workflow
-# Pipeline Snakemake: ERA5 → WPS → WRF → CALMET → CALPUFF → Post-proc SEIA
-# Soporta corrida continua (default, 5-7 dias) y segmentacion mensual
+# Snakefile (solo servidor): ERA5 -> WPS -> WRF -> CALWRF -> 3D.DAT
+# Corrida continua (un solo run). CALMET/CALPUFF/post corren en la PC.
+# Las etapas WPS/WRF usan archivos-marcador (.ok) porque sus salidas reales
+# tienen nombres con timestamp/zero-pad que no conviene enumerar en el DAG.
 # =============================================================================
 
 import yaml
-import os
 from pathlib import Path
 
 configfile: "config.yaml"
@@ -13,53 +13,31 @@ configfile: "config.yaml"
 with open("config.yaml") as f:
     cfg = yaml.safe_load(f)
 
-PROYECTO      = cfg["proyecto"]["nombre"].replace(" ", "_")
-ANIO          = cfg["periodo"]["anio"]
-MESES         = cfg["periodo"]["meses"]
-SEGMENTACION  = cfg["wrf"].get("segmentacion", "continua")
-SPINUP_DIAS   = cfg["wrf"].get("spinup_dias", 3)
-OUTPUT_DIR    = f"data/outputs/{PROYECTO}_{ANIO}"
-WRF_IMAGE     = cfg["docker"]["wrf_image"]
-CALPUFF_IMAGE = cfg["docker"]["calpuff_image"]
-RUTAS         = cfg["rutas"]
+PROYECTO   = cfg["proyecto"]["nombre"].replace(" ", "_")
+ANIO       = cfg["periodo"]["anio"]
+MESES      = cfg["periodo"]["meses"]
+OUTPUT_DIR = f"data/outputs/{PROYECTO}_{ANIO}"
+WRF_IMAGE  = cfg["docker"]["wrf_image"]
+CALWRF_IMAGE = cfg["docker"]["calwrf_image"]
+NPROCS     = cfg["docker"]["build"]["nprocs"]
+RUTAS      = cfg["rutas"]
 
-# ── Modo de corrida ──────────────────────────────────────────────────────────
-if SEGMENTACION == "continua":
-    # Una sola corrida para todo el año, pero ERA5 se baja por mes
-    PERIODO        = str(ANIO)
-    ERA5_FILE      = expand(f"data/raw/ERA5_{ANIO}_{{m:02d}}.grib", m=MESES)
-    FILE_PREFIX    = f"data/wps/FILE:{ANIO}"
-    MET_EM_PATTERN = [f"data/wps/met_em.d{d}.{ANIO}.nc" for d in range(1, 4)]
-    WRF_INPUT      = f"data/wrf/wrfinput_d01_{ANIO}"
-    WRF_BDY        = f"data/wrf/wrfbdy_d01_{ANIO}"
-    WRF_MARKER     = f"data/wrf/.wrf_done_{ANIO}"
-    WRF_OUTS       = [WRF_MARKER]
-    CALWRF_DONE    = "data/calmet/calwrf_ok"
-else:
-    # 12 segmentos mensuales con spin-up de 24h cada uno
-    PERIODO        = [f"{ANIO}-{m:02d}" for m in MESES]
-    ERA5_FILE      = [f"data/raw/ERA5_{ANIO}_{m:02d}.grib" for m in MESES]
-    FILE_PREFIX    = f"data/wps/FILE:{{periodo}}"
-    MET_EM_PATTERN = [f"data/wps/met_em.d{{d}}.{{periodo}}.nc" for d in range(1, 4)]
-    WRF_INPUT      = f"data/wrf/wrfinput_d01_{{periodo}}"
-    WRF_BDY        = f"data/wrf/wrfbdy_d01_{{periodo}}"
-    WRF_MARKER     = f"data/wrf/wrfout_d01_{{periodo}}_final.nc"
-    WRF_OUTS       = [f"data/wrf/wrfout_d01_{ANIO}-{m:02d}_final.nc" for m in MESES]
-    CALWRF_DONE    = "data/calmet/calwrf_ok"
+ERA5_FILE  = expand(f"data/raw/ERA5_{ANIO}_{{m:02d}}.grib", m=MESES)
+GEOGRID_OK = "data/wps/.geogrid_ok"
+UNGRIB_OK  = "data/wps/.ungrib_ok"
+METGRID_OK = "data/wps/.metgrid_ok"
+REAL_OK    = "data/wrf/.real_ok"
+WRF_MARKER = f"data/wrf/.wrf_done_{ANIO}"
 
 
-# ── Reglas ───────────────────────────────────────────────────────────────────
-
-# Alcance del repo = SOLO servidor: termina en CALMET.DAT (la meteorologia "lista").
-# CALPUFF (dispersion) + post-proceso SEIA corren en la Mac sobre CALMET.DAT.
+# ── Objetivo: 3D.DAT (CALWRF) + validacion meteorologica ────────────────────
 rule all:
     input:
-        "data/calmet/calmet.dat",
+        "data/calwrf/3d.dat",
         f"{OUTPUT_DIR}/validacion/validacion_wrf.png",
 
 
-# ── 1. Check de config SEA ──────────────────────────────────────────────────
-
+# ── 1. Check de config (Guia SEA) ───────────────────────────────────────────
 rule check_config:
     output:
         "data/.check_config_ok"
@@ -67,8 +45,7 @@ rule check_config:
         "python3 workflow/scripts/check_config.py config.yaml && touch {output}"
 
 
-# ── 2. Descarga ERA5 ────────────────────────────────────────────────────────
-
+# ── 2. Descarga ERA5 (pressure-levels + single-levels) ──────────────────────
 rule download_era5:
     input:
         "data/.check_config_ok"
@@ -78,171 +55,129 @@ rule download_era5:
         "python3 workflow/scripts/download_era5.py config.yaml"
 
 
-# ── 3. Renderizar namelists ─────────────────────────────────────────────────
-
+# ── 3. Renderizar namelists (WPS + WRF) ─────────────────────────────────────
 rule render_namelists:
     input:
         "data/.check_config_ok"
     output:
         "data/wps/namelist.wps",
-        "data/wrf/namelist.input",
-        "data/calmet/calmet.inp"
+        "data/wrf/namelist.input"
     shell:
         "python3 workflow/scripts/render_namelist.py config.yaml"
 
 
-# ── 4. Limpiar outputs previos ──────────────────────────────────────────────
-
-rule limpiar:
+# ── 4. WPS: geogrid ─────────────────────────────────────────────────────────
+rule geogrid:
     input:
         "data/wps/namelist.wps"
     output:
-        "data/.limpio"
-    shell:
-        """
-        rm -f data/wps/met_em.d0* data/wps/GRIBFILE.* data/wps/FILE:*
-        rm -f data/wrf/rsl.* data/wrf/wrfinput_d0* data/wrf/wrfbdy_d0*
-        touch {output}
-        """
-
-
-# ── 5. WPS: geogrid → ungrib → metgrid ─────────────────────────────────────
-
-rule geogrid:
-    input:
-        "data/wps/namelist.wps",
-        "data/.limpio"
-    output:
-        expand("data/wps/geo_em.d{{d}}.nc", d=[1, 2, 3])
+        GEOGRID_OK
     shell:
         """
         docker run --rm \
             -v $(pwd)/data:/data \
             -v {RUTAS[wps_geog]}:/data/WPS_GEOG \
             {WRF_IMAGE} \
-            bash -o pipefail -c "cd /data/wps && ln -sf /data/WPS_GEOG . && geogrid.exe" \
-            2>&1 | tee data/wps/geogrid.log
+            bash -o pipefail -c "cd /data/wps && ln -sf /opt/wps/geogrid/GEOGRID.TBL.ARW GEOGRID.TBL && geogrid.exe 2>&1 | tee geogrid.log"
+        touch {output}
         """
 
 
+# ── 5. WPS: ungrib (usa Vtable.ERA5) ────────────────────────────────────────
 rule ungrib:
     input:
         ERA5_FILE,
         "data/wps/namelist.wps"
     output:
-        FILE_PREFIX
+        UNGRIB_OK
     shell:
         """
-        # Enlazar la Vtable de ERA5 (pl+sfc) que ungrib necesita
         cp static/Vtable.ERA5 data/wps/Vtable
         docker run --rm \
             -v $(pwd)/data:/data \
             {WRF_IMAGE} \
-            bash -o pipefail -c "cd /data/wps && \
-                /opt/wps/link_grib.csh ../raw/ERA5_*.grib && \
-                ungrib.exe 2>&1 | tee ungrib.log"
+            bash -o pipefail -c "cd /data/wps && /opt/wps/link_grib.csh ../raw/ERA5_*.grib && ungrib.exe 2>&1 | tee ungrib.log"
+        touch {output}
         """
 
 
+# ── 6. WPS: metgrid ─────────────────────────────────────────────────────────
 rule metgrid:
     input:
-        rules.geogrid.output,
-        FILE_PREFIX,
+        GEOGRID_OK,
+        UNGRIB_OK,
         "data/wps/namelist.wps"
     output:
-        MET_EM_PATTERN
+        METGRID_OK
     shell:
         """
         docker run --rm \
             -v $(pwd)/data:/data \
             {WRF_IMAGE} \
-            bash -o pipefail -c "cd /data/wps && metgrid.exe 2>&1 | tee metgrid.log"
+            bash -o pipefail -c "cd /data/wps && ln -sf /opt/wps/metgrid/METGRID.TBL.ARW METGRID.TBL && metgrid.exe 2>&1 | tee metgrid.log"
+        touch {output}
         """
 
 
-# ── 6. WRF: real → wrf (corrida continua, checkpoint cada 6h) ───────────────
-
+# ── 7. WRF: real (enlaza tablas de /opt/wrf/run, preserva namelist) ─────────
 rule real:
     input:
-        MET_EM_PATTERN,
+        METGRID_OK,
         "data/wrf/namelist.input"
     output:
-        WRF_INPUT,
-        WRF_BDY
+        REAL_OK
     shell:
         """
         docker run --rm \
             -v $(pwd)/data:/data \
             {WRF_IMAGE} \
-            bash -o pipefail -c "cp /data/wps/met_em* /data/wrf/ && cd /data/wrf && real.exe 2>&1 | tee real.log"
+            bash -o pipefail -c "cd /data/wrf && \
+                ln -sf /opt/wrf/run/*.TBL /opt/wrf/run/*_DATA /opt/wrf/run/RRTM* /opt/wrf/run/*.formatted . 2>/dev/null; \
+                ln -sf /opt/wrf/main/real.exe /opt/wrf/main/wrf.exe . 2>/dev/null; \
+                ln -sf /data/wps/met_em.d0* . 2>/dev/null; \
+                mpirun --allow-run-as-root -np {NPROCS} ./real.exe 2>&1 | tee real.log"
+        touch {output}
         """
 
 
+# ── 8. WRF: wrf (corrida continua, checkpoint cada 6h via restart_interval) ─
 rule wrf:
     input:
-        rules.real.output,
+        REAL_OK,
         "data/wrf/namelist.input"
     output:
         WRF_MARKER
-    params:
-        nprocs=cfg["docker"]["build"]["nprocs"],
     shell:
         """
-        # Si existe wrfrst previo, WRF arranca desde checkpoint
-        # WRF detecta los wrfrst_* automaticamente cuando restart=TRUE en namelist
         docker run --rm \
             -v $(pwd)/data:/data \
             {WRF_IMAGE} \
-            bash -o pipefail -c "cd /data/wrf && mpirun --allow-run-as-root -np {params.nprocs} ./wrf.exe 2>&1 | tee wrf.log"
-
+            bash -o pipefail -c "cd /data/wrf && mpirun --allow-run-as-root -np {NPROCS} ./wrf.exe 2>&1 | tee wrf.log"
         touch {output}
-        echo "[OK] WRF finalizado. wrfout marcado en {output}"
         """
 
 
-# ── 7. CALWRF: convertir wrfout → inputs CALMET ─────────────────────────────
-
+# ── 9. CALWRF: wrfout (~40 GB) -> 3D.DAT (~4 GB) ────────────────────────────
+# Ultima etapa del servidor. CALMET/CALPUFF se hacen en la PC sobre el 3D.DAT.
 rule calwrf:
     input:
-        WRF_OUTS
+        WRF_MARKER
     output:
-        CALWRF_DONE
+        "data/calwrf/3d.dat"
     shell:
         """
+        python3 workflow/scripts/gen_calwrf_inp.py config.yaml
         docker run --rm \
             -v $(pwd)/data:/data \
-            {CALPUFF_IMAGE} \
-            bash -o pipefail -c "python3 /opt/calpuff/scripts/calwrf_wrapper.py \
-                --wrfout-dir /data/wrf \
-                --output-dir /data/calmet \
-                --start {cfg['periodo']['inicio']} \
-                --end {cfg['periodo']['fin']}"
-        touch {output}
+            {CALWRF_IMAGE} \
+            bash -o pipefail -c "cd /data/calwrf && calwrf.exe calwrf.inp 2>&1 | tee calwrf.log"
         """
 
 
-# ── 8. CALMET ───────────────────────────────────────────────────────────────
-
-rule calmet:
-    input:
-        CALWRF_DONE,
-        "data/calmet/calmet.inp"
-    output:
-        "data/calmet/calmet.dat"
-    shell:
-        """
-        docker run --rm \
-            -v $(pwd)/data:/data \
-            {CALPUFF_IMAGE} \
-            bash -o pipefail -c "cd /data/calmet && calmet.exe calmet.inp 2>&1 | tee calmet.log"
-        """
-
-
-# ── 9. Validacion WRF vs observaciones ─────────────────────────────────────
-
+# ── 10. Validacion WRF vs observaciones (exigencia SEA) ─────────────────────
 rule validar_wrf:
     input:
-        WRF_OUTS
+        WRF_MARKER
     output:
         f"{OUTPUT_DIR}/validacion/validacion_wrf.png"
     shell:
@@ -250,7 +185,3 @@ rule validar_wrf:
         mkdir -p {OUTPUT_DIR}/validacion
         python3 workflow/scripts/validar_wrf.py config.yaml
         """
-
-
-# CALPUFF + post-proceso SEIA ya NO viven aqui: corren en la Mac sobre CALMET.DAT.
-# Ver el repositorio/carpeta local de post-proceso.

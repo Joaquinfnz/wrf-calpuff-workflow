@@ -1,10 +1,10 @@
 #!/bin/bash
 # =============================================================================
-# correWRF.sh — Lanza la cadena meteorologica en AWS hasta CALMET.DAT,
+# correWRF.sh — Lanza la cadena del servidor (ERA5 -> WPS -> WRF -> CALWRF -> 3D.DAT),
 #               desatendido y resiliente para corridas de varios dias.
 #
-# Arquitectura: ERA5 -> WPS -> WRF -> CALWRF -> CALMET corren en AWS.
-# CALPUFF (dispersion) + post corren en la Mac sobre CALMET.DAT.
+# CALWRF corre aqui para reducir el wrfout (~40 GB) a 3D.DAT (~4 GB).
+# CALMET -> CALPUFF -> post corren en la PC sobre el 3D.DAT.
 #
 # Resiliencia ("lo lanzo una vez y no para hasta terminar"):
 #   - tmux: sobrevive a desconexiones SSH / cierre del terminal.
@@ -31,7 +31,7 @@ info(){ echo -e "${G}[INFO]${N}  $1"; }
 warn(){ echo -e "${Y}[WARN]${N}  $1"; }
 err(){  echo -e "${R}[ERROR]${N} $1"; }
 
-TARGET="data/calmet/calmet.dat"   # meteorologia "lista para CALPUFF"
+TARGET="data/calwrf/3d.dat"   # salida final del servidor (CALWRF: ~4 GB)
 SESSION="wrf"
 
 # ── Modo interno: bucle de reintento auto-reanudable (corre dentro de tmux) ──
@@ -41,9 +41,9 @@ if [ "${1:-}" = "__loop" ]; then
     while [ ! -f "$TARGET" ]; do
         snakemake --unlock >/dev/null 2>&1 || true   # limpiar lock de una caida previa
         t0=$SECONDS
-        info "[$(date '+%F %T')] Iniciando/reanudando Snakemake -> $TARGET"
-        if snakemake --cores "$CORES" --keep-going --rerun-incomplete --latency-wait 120 "$TARGET"; then
-            info "[$(date '+%F %T')] PIPELINE COMPLETO. CALMET.DAT listo."
+        info "[$(date '+%F %T')] Iniciando/reanudando Snakemake (rule all -> 3D.DAT + validacion)"
+        if snakemake --cores "$CORES" --keep-going --rerun-incomplete --latency-wait 120; then
+            info "[$(date '+%F %T')] PIPELINE COMPLETO. 3D.DAT (~4 GB) listo en data/calwrf/."
             exit 0
         fi
         dur=$((SECONDS - t0))
@@ -97,4 +97,4 @@ tmux new-session -d -s "$SESSION" "bash '$SELF' __loop 2>&1 | tee -a correwrf.lo
 info "Lanzado en tmux '$SESSION' (corre aunque cierres la sesion SSH)."
 info "  Monitorear:  tmux attach -t $SESSION   (salir sin cortar: Ctrl+B luego D)"
 info "  Log:         tail -f correwrf.log"
-info "  Al terminar: data/calmet/calmet.dat -> baja a la Mac con scripts/sync_wrf.sh"
+info "  Al terminar: data/calwrf/3d.dat (~4 GB) -> baja a la PC con scripts/sync_wrf.sh"

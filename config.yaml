@@ -179,7 +179,7 @@ rutas:
 # ── Docker ───────────────────────────────────────────────────────────────────
 docker:
   wrf_image: "wrf-wps:4.6"
-  calpuff_image: "calpuff:7"
+  calwrf_image: "calwrf:2.0.3"   # solo CALWRF (CALMET/CALPUFF van en la PC)
   build:
     wrf_version: "4.6.0"
     wps_version: "4.6.0"

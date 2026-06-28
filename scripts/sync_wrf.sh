@@ -1,15 +1,12 @@
 #!/bin/bash
 # =============================================================================
-# sync_wrf.sh — Baja los wrfout del servidor AWS a la Mac (flujo WRF-en-AWS).
+# sync_wrf.sh — Baja el resultado del servidor (3D.DAT de CALWRF) a la PC.
 #
-# Arquitectura: WRF corre en AWS; CALMET/CALPUFF/post se hacen en la Mac M1.
-# Este script trae solo los wrfout* (lo que la Mac necesita para CALWRF->CALMET).
+# El servidor reduce el wrfout (~40 GB) a un 3D.DAT (~4 GB) con CALWRF; esto
+# baja ese 3D.DAT + namelists + validacion. En la PC sigue: CALMET -> CALPUFF.
 #
-# Uso (desde la Mac):
+# Uso (desde la PC):
 #   bash sync_wrf.sh ubuntu@<IP> [/ruta/workflow] [llave.pem]
-#
-# Ejemplo:
-#   bash sync_wrf.sh ubuntu@1.2.3.4 ~/wrf-calpuff-workflow ~/keys/mi_aws.pem
 # =============================================================================
 set -euo pipefail
 
@@ -22,26 +19,25 @@ if [ -z "$SERVER" ]; then
     exit 1
 fi
 
-SSH_OPT=""
-[ -n "$PEM" ] && SSH_OPT="-e \"ssh -i $PEM\""
+RSH=""; SCP="scp"
+if [ -n "$PEM" ]; then RSH="ssh -i $PEM"; SCP="scp -i $PEM"; fi
 
-LOCAL_DIR="./wrfout_$(date +%Y%m%d_%H%M%S)"
+LOCAL_DIR="./calwrf_$(date +%Y%m%d_%H%M%S)"
 mkdir -p "$LOCAL_DIR"
-echo "[INFO] Bajando wrfout desde $SERVER:$REMOTE_DIR/data/wrf/  ->  $LOCAL_DIR/"
+echo "[INFO] Bajando 3D.DAT (~4 GB) desde $SERVER:$REMOTE_DIR/data/calwrf/"
 
-# rsync con reanudacion; los wrfout son grandes (decenas de GB)
+# 3D.DAT (resultado para CALMET) — rsync reanudable
 if [ -n "$PEM" ]; then
-    rsync -avz --partial --progress -e "ssh -i $PEM" \
-        "$SERVER:$REMOTE_DIR/data/wrf/wrfout_d0*" "$LOCAL_DIR/"
+    rsync -avz --partial --progress -e "$RSH" "$SERVER:$REMOTE_DIR/data/calwrf/3d.dat" "$LOCAL_DIR/"
 else
-    rsync -avz --partial --progress \
-        "$SERVER:$REMOTE_DIR/data/wrf/wrfout_d0*" "$LOCAL_DIR/"
+    rsync -avz --partial --progress "$SERVER:$REMOTE_DIR/data/calwrf/3d.dat" "$LOCAL_DIR/"
 fi
 
-# namelists usados (para el expediente SEA)
-SCP="scp"; [ -n "$PEM" ] && SCP="scp -i $PEM"
+# Namelists + validacion (para el expediente SEA)
 $SCP "$SERVER:$REMOTE_DIR/data/wrf/namelist.input" "$LOCAL_DIR/" 2>/dev/null || true
-$SCP "$SERVER:$REMOTE_DIR/data/wps/namelist.wps"  "$LOCAL_DIR/" 2>/dev/null || true
+$SCP "$SERVER:$REMOTE_DIR/data/wps/namelist.wps"   "$LOCAL_DIR/" 2>/dev/null || true
+$SCP "$SERVER:$REMOTE_DIR/data/calwrf/calwrf.log"  "$LOCAL_DIR/" 2>/dev/null || true
+$SCP -r "$SERVER:$REMOTE_DIR/data/outputs/"*/validacion "$LOCAL_DIR/validacion" 2>/dev/null || true
 
-echo "[OK] wrfout descargados en $LOCAL_DIR"
-echo "     Siguiente: CALWRF -> CALMET -> CALPUFF en la Mac (Docker x86 emulado)."
+echo "[OK] Descargado en $LOCAL_DIR"
+echo "     Siguiente en la PC: CALMET (3d.dat) -> CALPUFF -> post."
