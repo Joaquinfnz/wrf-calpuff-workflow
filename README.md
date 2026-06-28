@@ -25,9 +25,11 @@ bash scripts/setup_server.sh        # Docker + WRF/WPS 4.6 + CALMET/CALWRF + geo
 descarga el geog de alta resolución (30s) y deja el servidor listo. También
 deshabilita el reinicio automático del SO (clave para corridas de varios días).
 
-> ⚠️ **Binarios CALMET/CALWRF:** son del sistema CALPUFF (gratuito, desde
-> [src.com](http://www.src.com/)). Hay que colocarlos en `docker/calpuff/binarios/`
-> antes de construir la imagen (ver `docker/calpuff/check_binaries.sh`).
+> **Binarios CALMET/CALWRF:** se **compilan automáticamente** desde el código
+> fuente FORTRAN (gratuito, [calpuff.org](http://www.calpuff.org/)) durante el
+> build de la imagen Docker, con gfortran. No requieren descarga manual.
+> Si la compilación falla en tu gfortran, revisa el log del build (parche
+> documentado en [Enviroware](https://www.enviroware.com/compiling-calmet-and-calpuff-models-under-os-x/)).
 
 ## 2. Configurar el proyecto
 

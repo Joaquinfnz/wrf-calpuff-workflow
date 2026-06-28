@@ -1,19 +1,14 @@
 #!/bin/bash
-# Verifica que los binarios de CALPUFF esten presentes
-set -e
+# Verifica que los binarios del lado SERVIDOR (CALWRF + CALMET) esten compilados.
+# (CALPUFF/CALPOST corren en la Mac, no aqui.)
 
-echo "=== Verificando binarios CALPUFF ==="
+echo "=== Verificando binarios servidor (CALWRF + CALMET) ==="
 
-BINARIES=(
-    "calmet_v6.5/calmet.exe"
-    "calpuff_v7.x/calpuff.exe"
-    "calwrf_v2.x/calwrf.exe"
-    "calpost_v6.x/calpost.exe"
-)
+BINARIES=( "calwrf.exe" "calmet.exe" )
 
 missing=0
 for bin in "${BINARIES[@]}"; do
-    if [ -f "/opt/calpuff/binarios/$bin" ]; then
+    if command -v "$bin" >/dev/null 2>&1 || [ -f "/usr/local/bin/$bin" ]; then
         echo "  OK: $bin"
     else
         echo "  FALTA: $bin"
@@ -21,13 +16,12 @@ for bin in "${BINARIES[@]}"; do
     fi
 done
 
-if [ $missing -eq 1 ]; then
+if [ "$missing" -eq 1 ]; then
     echo ""
-    echo "ADVERTENCIA: Faltan binarios de CALPUFF."
-    echo "Los binarios de CALPUFF son software propietario de TRC/Exponent."
-    echo "Debes obtenerlos de http://www.src.com/ y colocarlos en:"
-    echo "  binarios/"
+    echo "ADVERTENCIA: faltan binarios. El Dockerfile los compila desde el fuente"
+    echo "de calpuff.org; si la compilacion con gfortran fallo, revisa el log del"
+    echo "build y el parche para gfortran (Enviroware / foro CALPUFF)."
     exit 1
 fi
 
-echo "Todos los binarios presentes."
+echo "Binarios del servidor presentes."

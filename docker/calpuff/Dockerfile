@@ -1,6 +1,7 @@
 # =============================================================================
-# CALMET 6.5 + CALPUFF 7 + CALWRF — Docker image
-# Basado en Ubuntu 22.04, gfortran
+# CALMET 6.5 + CALWRF 2.0.3 — imagen Docker (lado SERVIDOR).
+# Compila desde el codigo fuente FORTRAN (gratuito, calpuff.org) con gfortran.
+# Alcance servidor: solo CALWRF + CALMET (la dispersion CALPUFF corre en la Mac).
 # =============================================================================
 
 FROM ubuntu:22.04
@@ -8,65 +9,40 @@ FROM ubuntu:22.04
 ENV DEBIAN_FRONTEND=noninteractive \
     LANG=C.UTF-8
 
-# ── Dependencias ─────────────────────────────────────────────────────────────
+# ── Dependencias (gfortran + netCDF para CALWRF) ─────────────────────────────
 RUN apt-get update && apt-get install -y \
-    build-essential \
-    gfortran \
-    gcc \
-    make \
-    wget \
-    curl \
-    unzip \
-    git \
-    ca-certificates \
-    vim \
-    nano \
-    python3 \
-    python3-pip \
-    netcdf-bin \
-    libnetcdff-dev \
-    libnetcdf-dev \
+    build-essential gfortran gcc make \
+    wget curl unzip ca-certificates \
+    python3 python3-pip \
+    netcdf-bin libnetcdff-dev libnetcdf-dev \
     && rm -rf /var/lib/apt/lists/*
 
-# ── Instalar dependencias Python ─────────────────────────────────────────────
-RUN pip3 install --no-cache-dir numpy pandas xarray netCDF4 matplotlib
-
-# ── Directorio de modelos ───────────────────────────────────────────────────
 WORKDIR /opt/calpuff
 
-# ── NOTA: Los binarios de CALPUFF/CALMET/CALWRF/CALPOST son propietarios ──
-# ── y se distribuyen bajo licencia de TRC/Exponent.                         ──
-# ── Debes obtenerlos de: http://www.src.com/                                 ──
-# ── Coloca los binarios compilados en: ./binarios/                           ──
-# ──                                                                          ──
-# ── Estructura esperada:                                                     ──
-# ──   binarios/                                                              ──
-# ──     calmet_v6.5/                                                         ──
-# ──       calmet.exe                                                         ──
-# ──     calpuff_v7.x/                                                        ──
-# ──       calpuff.exe                                                        ──
-# ──     calwrf_v2.x/                                                         ──
-# ──       calwrf.exe                                                         ──
-# ──     calpost_v6.x/                                                        ──
-# ──       calpost.exe                                                        ──
-# ──                                                                          ──
-# ── Para development/testing público, este Dockerfile compila versiones      ──
-# ── de los utilitarios de la EPA que son open source.                        ──
+# Flags estandar para compilar el FORTRAN legado de CALPUFF con gfortran moderno.
+# -fno-automatic ~ SAVE implicito (evita segfaults clasicos del codigo legado).
+ENV FFLAGS="-O2 -fno-automatic -std=legacy -fallow-argument-mismatch -ffixed-line-length-none"
 
-RUN mkdir -p /opt/calpuff/binarios /opt/calpuff/inputs /opt/calpuff/outputs
+# ── CALMET v6.5.0 (modelo meteorologico diagnostico) ────────────────────────
+RUN wget -q "http://www.calpuff.org/calpuff/download/Mod7_Files/CALMET_v6.5.0_L150223.zip" -O calmet.zip \
+    && unzip -q calmet.zip -d calmet_src && rm calmet.zip \
+    && SRC="$(find calmet_src -iname 'calmet.for' | head -1)" \
+    && cd "$(dirname "$SRC")" \
+    && gfortran $FFLAGS -o /usr/local/bin/calmet.exe calmet.for \
+    && echo "[OK] calmet.exe compilado" \
+    || echo "[WARN] Fallo compilacion de CALMET con gfortran. Ver: https://www.enviroware.com/compiling-calmet-and-calpuff-models-under-os-x/"
 
-# ── Compilar utilitarios open-source de EPA ──────────────────────────────────
-# Scimere2 (pre/post processor, parte de la suite CALPUFF)
-WORKDIR /opt/calpuff
-RUN wget -q https://gaftp.epa.gov/Air/aqmg/SCRAM/models/other/calpuff/CALPUFF_v7.2.1_L150618.zip -O calpuff_pkg.zip \
-    && unzip -q calpuff_pkg.zip -d calpuff_src \
-    && rm calpuff_pkg.zip \
-    || echo "EPA source not available. Place licensed binaries in ./binarios/"
+# ── CALWRF v2.0.3 (convierte wrfout -> input CALMET; enlaza netCDF) ──────────
+RUN wget -q "http://www.calpuff.org/calpuff/download/Mod7_Files/CALWRF_v2.0.3_L190426.zip" -O calwrf.zip \
+    && unzip -q calwrf.zip -d calwrf_src && rm calwrf.zip \
+    && SRC="$(find calwrf_src \( -iname 'calwrf*.f' -o -iname 'calwrf*.f90' \) | head -1)" \
+    && cd "$(dirname "$SRC")" \
+    && gfortran $FFLAGS -o /usr/local/bin/calwrf.exe "$(basename "$SRC")" -I/usr/include -lnetcdff -lnetcdf \
+    && echo "[OK] calwrf.exe compilado" \
+    || echo "[WARN] Fallo compilacion de CALWRF (revisar netCDF y parche para WRF 4.6)."
 
-# ── Verificar binarios ──────────────────────────────────────────────────────
+# ── Verificar binarios al final del build ───────────────────────────────────
 COPY check_binaries.sh /opt/calpuff/
-RUN chmod +x /opt/calpuff/check_binaries.sh
+RUN chmod +x /opt/calpuff/check_binaries.sh && /opt/calpuff/check_binaries.sh || true
 
-# ── Entrypoint ───────────────────────────────────────────────────────────────
 WORKDIR /data
-ENV PATH="/opt/calpuff/binarios/calmet_v6.5:/opt/calpuff/binarios/calpuff_v7.x:/opt/calpuff/binarios/calwrf_v2.x:/opt/calpuff/binarios/calpost_v6.x:${PATH}"
