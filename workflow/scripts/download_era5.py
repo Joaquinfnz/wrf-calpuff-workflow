@@ -21,7 +21,35 @@ import yaml
 import calendar
 from pathlib import Path
 
-import cdsapi
+# cdsapi se importa dentro de download_era5(): el Snakefile importa
+# meses_periodo() de este modulo y no debe exigir cdsapi instalado.
+
+
+def meses_periodo(inicio, fin):
+    """Pares (anio, mes) que cubren periodo.inicio..fin (incluye el spin-up,
+    que puede caer en el anio/mes anterior al año evaluado)."""
+    yi, mi = int(inicio[:4]), int(inicio[5:7])
+    yf, mf = int(fin[:4]), int(fin[5:7])
+    pares = []
+    y, m = yi, mi
+    while (y, m) <= (yf, mf):
+        pares.append((y, m))
+        y, m = (y + 1, 1) if m == 12 else (y, m + 1)
+    return pares
+
+
+def dias_mes_en_periodo(anio, mes, inicio, fin):
+    """Dias del mes que caen dentro de inicio..fin. En los meses de borde
+    (p.ej. el mes del spin-up o el dia final) evita bajar el mes completo."""
+    ndias = calendar.monthrange(anio, mes)[1]
+    d_ini, d_fin = 1, ndias
+    yi, mi, di = int(inicio[:4]), int(inicio[5:7]), int(inicio[8:10])
+    yf, mf, df = int(fin[:4]), int(fin[5:7]), int(fin[8:10])
+    if (anio, mes) == (yi, mi):
+        d_ini = di
+    if (anio, mes) == (yf, mf):
+        d_fin = df
+    return [f"{d:02d}" for d in range(d_ini, d_fin + 1)]
 
 # 37 niveles de presion estandar de ERA5 (hPa). => num_metgrid_levels = 38 (37 + sup).
 PRESSURE_LEVELS = [
@@ -83,31 +111,40 @@ def _retrieve(client, dataset, request, target, max_retries=5):
     sys.exit(1)
 
 
-def download_era5(config_path):
+def download_era5(config_path, solo=None):
+    """Descarga los meses que cubren periodo.inicio..fin (spin-up incluido).
+    Con solo="YYYY-MM" baja unicamente ese mes (para la rule por-mes del
+    Snakefile: una descarga fallida no invalida los meses ya bajados)."""
+    import cdsapi
+
     with open(config_path) as f:
         cfg = yaml.safe_load(f)
 
-    anio = cfg["periodo"]["anio"]
-    meses = cfg["periodo"]["meses"]
     era5 = cfg["era5"]
     area = era5["area"]   # [N, W, S, E]
     grid = era5["grid"]   # [dlat, dlon]
     raw = Path("data/raw")
     raw.mkdir(parents=True, exist_ok=True)
 
+    pares = meses_periodo(cfg["periodo"]["inicio"], cfg["periodo"]["fin"])
+    if solo:
+        y, m = int(solo[:4]), int(solo[5:7])
+        pares = [(y, m)]
+
     _ensure_cdsapirc(era5)
     c = cdsapi.Client()
 
-    for mes in meses:
+    inicio = cfg["periodo"]["inicio"]
+    fin = cfg["periodo"]["fin"]
+    for anio, mes in pares:
         final = raw / f"ERA5_{anio}_{mes:02d}.grib"
         if final.exists():
             print(f"[SKIP] {final} ya existe")
             continue
 
-        ndias = calendar.monthrange(anio, mes)[1]
-        dias = [f"{d:02d}" for d in range(1, ndias + 1)]
+        dias = dias_mes_en_periodo(anio, mes, inicio, fin)
         horas = [f"{h:02d}:00" for h in range(0, 24, 6)]  # 6-horario para WPS
-        print(f"[DOWNLOAD] ERA5 {anio}-{mes:02d} ({ndias} dias x {len(horas)} h)")
+        print(f"[DOWNLOAD] ERA5 {anio}-{mes:02d} ({len(dias)} dias x {len(horas)} h)")
 
         pl = raw / f"ERA5_{anio}_{mes:02d}_pl.grib"
         sfc = raw / f"ERA5_{anio}_{mes:02d}_sfc.grib"
@@ -128,9 +165,12 @@ def download_era5(config_path):
         }, sfc)
 
         # ungrib lee todos los mensajes de un GRIB -> concatenar sup + presion
+        # (por streaming: el pl mensual puede pesar varios GB)
+        import shutil
         with open(final, "wb") as out:
-            out.write(sfc.read_bytes())
-            out.write(pl.read_bytes())
+            for parte in (sfc, pl):
+                with open(parte, "rb") as src:
+                    shutil.copyfileobj(src, out)
         pl.unlink()
         sfc.unlink()
         print(f"  [OK] {final}")
@@ -138,6 +178,9 @@ def download_era5(config_path):
 
 if __name__ == "__main__":
     if len(sys.argv) < 2:
-        print("Uso: python3 download_era5.py config.yaml")
+        print("Uso: python3 download_era5.py config.yaml [--solo YYYY-MM]")
         sys.exit(1)
-    download_era5(sys.argv[1])
+    solo = None
+    if "--solo" in sys.argv:
+        solo = sys.argv[sys.argv.index("--solo") + 1]
+    download_era5(sys.argv[1], solo=solo)

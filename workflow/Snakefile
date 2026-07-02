@@ -5,8 +5,12 @@
 # tienen nombres con timestamp/zero-pad que no conviene enumerar en el DAG.
 # =============================================================================
 
+import sys
 import yaml
 from pathlib import Path
+
+sys.path.insert(0, "workflow/scripts")
+from download_era5 import meses_periodo
 
 configfile: "config.yaml"
 
@@ -14,20 +18,26 @@ with open("config.yaml") as f:
     cfg = yaml.safe_load(f)
 
 PROYECTO   = cfg["proyecto"]["nombre"].replace(" ", "_")
-ANIO       = cfg["periodo"]["anio"]
-MESES      = cfg["periodo"]["meses"]
-OUTPUT_DIR = f"data/outputs/{PROYECTO}_{ANIO}"
+ETIQUETA   = cfg["periodo"]["etiqueta"]
+OUTPUT_DIR = f"data/outputs/{PROYECTO}_{ETIQUETA}"
 WRF_IMAGE  = cfg["docker"]["wrf_image"]
 CALWRF_IMAGE = cfg["docker"]["calwrf_image"]
 NPROCS     = cfg["docker"]["build"]["nprocs"]
 RUTAS      = cfg["rutas"]
 
-ERA5_FILE  = expand(f"data/raw/ERA5_{ANIO}_{{m:02d}}.grib", m=MESES)
+# Meses derivados de periodo.inicio..fin: incluye el spin-up aunque caiga en
+# el anio anterior (antes solo se bajaba periodo.anio y ungrib fallaba).
+ERA5_FILE  = [f"data/raw/ERA5_{y}_{m:02d}.grib"
+              for y, m in meses_periodo(cfg["periodo"]["inicio"], cfg["periodo"]["fin"])]
+
+# mpirun -np acotado a los cores reales de la instancia (en la instancia de
+# setup hay 8 vCPU; -np 32 haria fallar OpenMPI por falta de slots).
+MPI_NP = f"$(( $(nproc) < {NPROCS} ? $(nproc) : {NPROCS} ))"
 GEOGRID_OK = "data/wps/.geogrid_ok"
 UNGRIB_OK  = "data/wps/.ungrib_ok"
 METGRID_OK = "data/wps/.metgrid_ok"
 REAL_OK    = "data/wrf/.real_ok"
-WRF_MARKER = f"data/wrf/.wrf_done_{ANIO}"
+WRF_MARKER = f"data/wrf/.wrf_done_{ETIQUETA}"
 
 
 # ── Objetivo: 3D.DAT (CALWRF) + validacion meteorologica ────────────────────
@@ -45,14 +55,19 @@ rule check_config:
         "python3 workflow/scripts/check_config.py config.yaml && touch {output}"
 
 
-# ── 2. Descarga ERA5 (pressure-levels + single-levels) ──────────────────────
+# ── 2. Descarga ERA5 (pressure-levels + single-levels), un job por mes ──────
+# Por-mes para que un fallo de descarga no invalide (Snakemake borraria) los
+# meses ya bajados, y para reanudar donde quedo.
 rule download_era5:
     input:
         "data/.check_config_ok"
     output:
-        ERA5_FILE
+        "data/raw/ERA5_{anio}_{mes}.grib"
+    wildcard_constraints:
+        anio=r"\d{4}",
+        mes=r"\d{2}"
     shell:
-        "python3 workflow/scripts/download_era5.py config.yaml"
+        "python3 workflow/scripts/download_era5.py config.yaml --solo {wildcards.anio}-{wildcards.mes}"
 
 
 # ── 3. Renderizar namelists (WPS + WRF) ─────────────────────────────────────
@@ -135,12 +150,14 @@ rule real:
                 ln -sf /opt/wrf/run/*.TBL /opt/wrf/run/*_DATA /opt/wrf/run/RRTM* /opt/wrf/run/*.formatted . 2>/dev/null; \
                 ln -sf /opt/wrf/main/real.exe /opt/wrf/main/wrf.exe . 2>/dev/null; \
                 ln -sf /data/wps/met_em.d0* . 2>/dev/null; \
-                mpirun --allow-run-as-root -np {NPROCS} ./real.exe 2>&1 | tee real.log"
+                mpirun --allow-run-as-root -np {MPI_NP} ./real.exe 2>&1 | tee real.log"
         touch {output}
         """
 
 
 # ── 8. WRF: wrf (corrida continua, checkpoint cada 6h via restart_interval) ─
+# prepare_restart.py: si hay wrfrst_* de una caida previa, parcha el namelist
+# (restart=.true. + start_* al checkpoint) para reanudar EN VEZ de partir de 0.
 rule wrf:
     input:
         REAL_OK,
@@ -149,10 +166,11 @@ rule wrf:
         WRF_MARKER
     shell:
         """
+        python3 workflow/scripts/prepare_restart.py data/wrf/namelist.input data/wrf
         docker run --rm \
             -v $(pwd)/data:/data \
             {WRF_IMAGE} \
-            bash -o pipefail -c "cd /data/wrf && mpirun --allow-run-as-root -np {NPROCS} ./wrf.exe 2>&1 | tee wrf.log"
+            bash -o pipefail -c "cd /data/wrf && mpirun --allow-run-as-root -np {MPI_NP} ./wrf.exe 2>&1 | tee -a wrf.log"
         touch {output}
         """
 

@@ -50,6 +50,8 @@ secrets.env
 *.swp
 *.swo
 
-# Python
-__pycache__/
-*.pyc
+# ── Backups de importar_kmz --apply ─────────────────────────────────────────
+*.yaml.bak
+
+# ── Snakemake ───────────────────────────────────────────────────────────────
+.snakemake/

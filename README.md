@@ -43,9 +43,11 @@ bash scripts/correWRF.sh
 ```
 
 Lanza en `tmux` la cadena `ERA5 → WPS → WRF → CALWRF` hasta `data/calwrf/3d.dat`,
-con **reintento auto-reanudable**: si un paso se cae, Snakemake reanuda desde el
-checkpoint (WRF reinicia cada 6 h); si falla 3 veces seguidas rápido se detiene
-para no gastar crédito.
+con **reintento auto-reanudable**: si WRF se cae, `prepare_restart.py` detecta el
+último checkpoint `wrfrst_*` (cada 6 h) y parcha el namelist para **reanudar desde
+ahí** (no desde cero); si falla 3 veces seguidas rápido se detiene para no gastar
+crédito. La descarga ERA5 es por mes (reanudable) e incluye el spin-up aunque
+caiga en el año anterior.
 
 ```bash
 tmux attach -t wrf     # monitorear (salir sin cortar: Ctrl+B, D)
@@ -72,8 +74,11 @@ grande para correr (el disco EBS persiste el setup).
 | Configurar | `c6i.2xlarge` | 8 | ~$2 |
 | Correr | `c6i.16xlarge` | 64 | según uso |
 
-Flujo: lanzar `c6i.2xlarge` (Ubuntu 22.04, disco **300 GB gp3**) → setup →
+Flujo: lanzar `c6i.2xlarge` (Ubuntu 22.04/24.04, disco **300 GB gp3**) → setup →
 **Stop → cambiar tipo a `c6i.16xlarge` → Start** → `correWRF.sh`.
+
+> Requiere cuota de vCPU On-Demand (familia Standard) ≥ 64 en la cuenta AWS
+> (Service Quotas → *Running On-Demand Standard instances*).
 
 > **Mide, no estimes:** corre 1 día simulado (~US$1-2) y cronometra. Para estos
 > dominios (61×61×40, 3 anidados) WRF es rápido (~3-6 días en 64 vCPU).
@@ -96,7 +101,8 @@ WSM6, Kain-Fritsch (d01/d02), YSU, Revised MM5, Noah LSM, Dudhia/RRTM.
 ├── workflow/
 │   ├── Snakefile            # pipeline hasta 3d.dat
 │   └── scripts/             # check_config, download_era5, render_namelist,
-│                            #   importar_kmz, gen_calwrf_inp, validar_wrf
+│                            #   importar_kmz, gen_calwrf_inp, validar_wrf,
+│                            #   prepare_restart (reanudar WRF desde wrfrst)
 └── scripts/
     ├── setup_server.sh · correWRF.sh · sync_wrf.sh
 ```
