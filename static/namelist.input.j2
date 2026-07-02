@@ -38,13 +38,13 @@
  max_dom                  = {{ wrf.max_dom }},
  e_we                     = {% for d in wrf.dominios.values() | list %}{{ d.e_we }},{% endfor %}
  e_sn                     = {% for d in wrf.dominios.values() | list %}{{ d.e_sn }},{% endfor %}
- e_vert                   = {{ wrf.e_vert }},{{ wrf.e_vert }},{{ wrf.e_vert }},
+ e_vert                   = {% for d in range(wrf.max_dom) %}{{ wrf.e_vert }},{% endfor %}
  p_top_requested          = {{ wrf.p_top_requested }},
  num_metgrid_levels       = {{ wrf.num_metgrid_levels }},
  num_metgrid_soil_levels  = 4,
  dx                       = {% for d in wrf.dominios.values() | list %}{{ d.resolution_km * 1000 }},{% endfor %}
  dy                       = {% for d in wrf.dominios.values() | list %}{{ d.resolution_km * 1000 }},{% endfor %}
- grid_id                  = 1,2,3,
+ grid_id                  = {% for d in range(wrf.max_dom) %}{{ loop.index }},{% endfor %}
  parent_id                = {% for d in wrf.dominios.values() | list %}{{ d.parent_id }},{% endfor %}
  i_parent_start           = {% for d in wrf.dominios.values() | list %}{{ d.i_parent_start }},{% endfor %}
  j_parent_start           = {% for d in wrf.dominios.values() | list %}{{ d.j_parent_start }},{% endfor %}

@@ -8,8 +8,8 @@
 #
 # Resiliencia ("lo lanzo una vez y no para hasta terminar"):
 #   - tmux: sobrevive a desconexiones SSH / cierre del terminal.
-#   - bucle de reintento: si un paso se cae, Snakemake reanuda desde el
-#     ultimo checkpoint (--rerun-incomplete). WRF tiene restart cada 6h.
+#   - bucle de reintento: si un paso se cae, Snakemake relanza la rule y
+#     prepare_restart.py reanuda WRF desde el ultimo wrfrst (checkpoint 6h).
 #   - corta-circuito: 3 fallos rapidos seguidos (<2 min) = error de config,
 #     no transitorio -> aborta para no gastar credito de mas.
 #
@@ -67,15 +67,23 @@ fi
 
 # ── 1. Chequeos de setup ────────────────────────────────────────────────────
 [ -f config.yaml ] || { err "Falta config.yaml en $WF"; exit 1; }
-for img in "wrf-wps:4.6" "calpuff:7"; do
+# Imagenes leidas del config (antes se chequeaba 'calpuff:7', que no existe)
+IMAGES=$(python3 -c "import yaml;d=yaml.safe_load(open('config.yaml'))['docker'];print(d['wrf_image'],d['calwrf_image'])")
+for img in $IMAGES; do
     docker image inspect "$img" >/dev/null 2>&1 || {
         err "Falta la imagen Docker '$img'. Corre primero: bash scripts/setup_server.sh"; exit 1; }
 done
-[ -f /data/WPS_GEOG/GEOGRID.TBL ] || {
-    err "Falta WPS_GEOG en /data/WPS_GEOG. Corre primero: bash scripts/setup_server.sh"; exit 1; }
+# WPS_GEOG = carpetas de datos de terreno (GEOGRID.TBL es parte de WPS, no va aqui)
+WPS_GEOG_DIR=$(python3 -c "import yaml;print(yaml.safe_load(open('config.yaml'))['rutas']['wps_geog'])")
+[ -d "$WPS_GEOG_DIR" ] && [ -n "$(ls -A "$WPS_GEOG_DIR" 2>/dev/null)" ] || {
+    err "WPS_GEOG vacio o inexistente en $WPS_GEOG_DIR. Corre primero: bash scripts/setup_server.sh"; exit 1; }
 : "${CDSAPI_KEY:?Define CDSAPI_KEY (token CDS): export CDSAPI_KEY=...}"
 command -v tmux >/dev/null 2>&1 || { err "tmux no esta instalado"; exit 1; }
-command -v snakemake >/dev/null 2>&1 || { info "Instalando snakemake..."; pip3 install --user -q snakemake; }
+command -v snakemake >/dev/null 2>&1 || {
+    info "Instalando snakemake..."
+    # Ubuntu 24.04: pip --user requiere --break-system-packages (PEP 668)
+    pip3 install --user -q snakemake 2>/dev/null || pip3 install --user -q --break-system-packages snakemake
+}
 
 CORES=$(nproc)
 NP=$(python3 -c "import yaml;print(yaml.safe_load(open('config.yaml'))['docker']['build']['nprocs'])")

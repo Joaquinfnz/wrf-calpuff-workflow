@@ -3,16 +3,15 @@
 # setup_server.sh — Instalacion completa en servidor (AWS / Hetzner / etc.)
 #
 # Uso:
-#   1. Conectate via SSH al servidor
-#   2. curl -O https://raw.github.com/.../setup_server.sh
-#   3. bash setup_server.sh
+#   1. Conectate via SSH al servidor (Ubuntu 22.04 / 24.04)
+#   2. git clone https://github.com/Joaquinfnz/wrf-calpuff-workflow.git
+#   3. bash wrf-calpuff-workflow/scripts/setup_server.sh
 #
 # Este script:
 #   - Instala Docker, git, Python
 #   - Clona el repo
-#   - Construye las imagenes Docker (WRF + CALPUFF)
-#   - Descarga WPS_GEOG (datos estaticos de terreno)
-#   - Descarga ERA5 si se requiere
+#   - Construye las imagenes Docker (WRF/WPS + CALWRF)
+#   - Descarga WPS_GEOG (datos estaticos de terreno, 30s)
 #
 # Tiempo estimado: 1.5 - 2 horas (principalmente compilando WRF)
 # =============================================================================
@@ -78,6 +77,11 @@ sudo systemctl enable docker --now
 sudo usermod -aG docker "$USER"
 log_info "Docker configurado (re-login para usar sin sudo)"
 
+# El grupo docker recien agregado NO aplica en esta misma sesion: los builds
+# de abajo fallarian con "permission denied". Usar sudo si hace falta.
+DOCKER="docker"
+docker info >/dev/null 2>&1 || DOCKER="sudo docker"
+
 # Evitar que el SO se reinicie por updates automaticos durante una corrida de varios dias
 echo 'Unattended-Upgrade::Automatic-Reboot "false";' | sudo tee /etc/apt/apt.conf.d/99-no-auto-reboot >/dev/null
 log_info "Reinicio automatico por updates deshabilitado (corridas largas seguras)"
@@ -114,13 +118,13 @@ cd "$WORKFLOW_DIR"
 log_step "Paso 5/7: Construyendo imagen WRF + WPS (~50 min)"
 
 log_info "Construyendo wrf-wps:4.6 ..."
-docker build -t "$WRF_IMAGE" docker/wrf/ 2>&1 | tail -10
+$DOCKER build -t "$WRF_IMAGE" docker/wrf/ 2>&1 | tail -10
 log_info "Imagen WRF construida: $WRF_IMAGE"
 
 log_step "Paso 6/7: Construyendo imagen CALWRF (compila desde fuente, ~5 min)"
 
 log_info "Construyendo $CALWRF_IMAGE ..."
-docker build -t "$CALWRF_IMAGE" docker/calwrf/ 2>&1 | tail -10
+$DOCKER build -t "$CALWRF_IMAGE" docker/calwrf/ 2>&1 | tail -10
 log_info "Imagen CALWRF construida: $CALWRF_IMAGE"
 
 # ── 6. Descargar WPS_GEOG ──────────────────────────────────────────────────
@@ -129,7 +133,9 @@ log_step "Paso 7/7: Descargando datos estaticos WPS_GEOG"
 # Alta resolucion (30s) — obligatorio para 1 km en terreno complejo (precordillera andina)
 WPS_GEOG_URL="https://www2.mmm.ucar.edu/wrf/src/wps_files/geog_high_res_mandatory.tar.gz"
 
-if [ -f "$WPS_GEOG_DIR/GEOGRID.TBL" ]; then
+# WPS_GEOG trae carpetas de terreno (topo_gmted2010_30s, landuse, etc.);
+# GEOGRID.TBL es parte de WPS, no de estos datos — chequear carpeta no-vacia.
+if [ -d "$WPS_GEOG_DIR" ] && [ -n "$(ls -A "$WPS_GEOG_DIR" 2>/dev/null)" ]; then
     log_info "WPS_GEOG ya existe en $WPS_GEOG_DIR"
 else
     log_info "Descargando WPS_GEOG alta resolucion 30s (~2.6 GB)..."
@@ -149,19 +155,11 @@ else
 fi
 
 # ── 7. Instalar dependencias Python ────────────────────────────────────────
-log_info "Instalando dependencias Python..."
-python3 -m pip install --user --quiet \
-    pyyaml \
-    jinja2 \
-    numpy \
-    pandas \
-    xarray \
-    matplotlib \
-    netCDF4 \
-    cdsapi \
-    cfgrib \
-    openpyxl \
-    2>&1 | tail -3
+# Ubuntu 24.04: pip --user requiere --break-system-packages (PEP 668)
+log_info "Instalando dependencias Python (requirements.txt)..."
+PIP_FLAGS="--user --quiet"
+python3 -m pip install $PIP_FLAGS pyyaml 2>/dev/null || PIP_FLAGS="$PIP_FLAGS --break-system-packages"
+python3 -m pip install $PIP_FLAGS -r "$WORKFLOW_DIR/requirements.txt" 2>&1 | tail -3
 
 # ── Resumen ─────────────────────────────────────────────────────────────────
 echo ""

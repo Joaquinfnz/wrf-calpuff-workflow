@@ -6,9 +6,23 @@ Verifica requisitos minimos de la Guia SEA 2023:
   - Minimo 50 celdas por direccion
   - Minimo 2-3 dominios anidados
   - Emisiones con tasas horarias
+Y consistencia interna:
+  - era5.area cubre el dominio exterior d01 (si no, metgrid falla a mitad
+    de corrida por datos faltantes en el borde)
 """
+import math
 import sys
 import yaml
+
+
+def era5_area_minima(wrf):
+    """[N, W, S, E] minimo que debe cubrir era5.area para contener d01."""
+    d01 = list(wrf["dominios"].values())[0]
+    half_km = (d01["e_we"] - 1) * d01["resolution_km"] / 2.0
+    dlat = half_km / 111.0
+    dlon = half_km / (111.0 * math.cos(math.radians(wrf["ref_lat"])))
+    return [wrf["ref_lat"] + dlat, wrf["ref_lon"] - dlon,
+            wrf["ref_lat"] - dlat, wrf["ref_lon"] + dlon]
 
 
 def check_config(config_path):
@@ -65,6 +79,18 @@ def check_config(config_path):
             f"para contaminantes primarios."
         )
 
+    # ── Cobertura ERA5 vs dominio d01 ───────────────────────────────────────
+    area = cfg.get("era5", {}).get("area")
+    if area:
+        n, w, s, e = area
+        n_min, w_min, s_min, e_min = era5_area_minima(wrf)
+        if n < n_min or w > w_min or s > s_min or e < e_min:
+            errors.append(
+                f"era5.area {area} NO cubre el dominio d01 "
+                f"(minimo [N,W,S,E] = [{n_min:.2f}, {w_min:.2f}, {s_min:.2f}, {e_min:.2f}]). "
+                f"metgrid fallaria por datos faltantes. Recalcula con importar_kmz.py."
+            )
+
     # ── Emisiones horarias ─────────────────────────────────────────────────
     formato = cfg["emisiones"].get("formato", "")
     if formato.lower() != "horario":
@@ -98,15 +124,16 @@ def check_config(config_path):
         for w in warnings:
             print(f"    [WARN]  {w}")
 
+    phys = wrf.get("physics", {})
     print(f"\n  [OK] {ndom} dominios anidados")
     print(f"  [OK] Dominio fino: {dom_fino['resolution_km']} km")
     print(f"  [OK] Celdas: {dom_fino['e_we']}x{dom_fino['e_sn']}")
     print(f"  [OK] Periodo: {dias} dias")
-    print(f"  [OK] Microphysics: WSM6 (mp_physics=6)")
-    print(f"  [OK] Cumulus: Kain-Fritsch (d01/d02)")
-    print(f"  [OK] PBL: YSU")
-    print(f"  [OK] Superficie: Noah LSM")
+    print(f"  [OK] mp_physics={phys.get('mp_physics')}  cu_physics={phys.get('cu_physics')}")
+    print(f"  [OK] bl_pbl={phys.get('bl_pbl_physics')}  sf_surface={phys.get('sf_surface_physics')}")
     print(f"  [OK] Proyeccion: {wrf['map_proj']}")
+    if area:
+        print(f"  [OK] era5.area cubre d01")
     print(f"\n  Configuracion validada. Listo para correr.\n")
 
 
