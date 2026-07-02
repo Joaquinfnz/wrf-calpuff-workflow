@@ -18,8 +18,8 @@ with open("config.yaml") as f:
     cfg = yaml.safe_load(f)
 
 PROYECTO   = cfg["proyecto"]["nombre"].replace(" ", "_")
-ANIO       = cfg["periodo"]["anio"]
-OUTPUT_DIR = f"data/outputs/{PROYECTO}_{ANIO}"
+ETIQUETA   = cfg["periodo"]["etiqueta"]
+OUTPUT_DIR = f"data/outputs/{PROYECTO}_{ETIQUETA}"
 WRF_IMAGE  = cfg["docker"]["wrf_image"]
 CALWRF_IMAGE = cfg["docker"]["calwrf_image"]
 NPROCS     = cfg["docker"]["build"]["nprocs"]
@@ -37,7 +37,7 @@ GEOGRID_OK = "data/wps/.geogrid_ok"
 UNGRIB_OK  = "data/wps/.ungrib_ok"
 METGRID_OK = "data/wps/.metgrid_ok"
 REAL_OK    = "data/wrf/.real_ok"
-WRF_MARKER = f"data/wrf/.wrf_done_{ANIO}"
+WRF_MARKER = f"data/wrf/.wrf_done_{ETIQUETA}"
 
 
 # ── Objetivo: 3D.DAT (CALWRF) + validacion meteorologica ────────────────────

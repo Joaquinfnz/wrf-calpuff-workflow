@@ -27,7 +27,7 @@ from pathlib import Path
 
 def meses_periodo(inicio, fin):
     """Pares (anio, mes) que cubren periodo.inicio..fin (incluye el spin-up,
-    que puede caer en el anio anterior, p.ej. 2023-12 para un run 2024)."""
+    que puede caer en el anio/mes anterior al año evaluado)."""
     yi, mi = int(inicio[:4]), int(inicio[5:7])
     yf, mf = int(fin[:4]), int(fin[5:7])
     pares = []
@@ -36,6 +36,20 @@ def meses_periodo(inicio, fin):
         pares.append((y, m))
         y, m = (y + 1, 1) if m == 12 else (y, m + 1)
     return pares
+
+
+def dias_mes_en_periodo(anio, mes, inicio, fin):
+    """Dias del mes que caen dentro de inicio..fin. En los meses de borde
+    (p.ej. el mes del spin-up o el dia final) evita bajar el mes completo."""
+    ndias = calendar.monthrange(anio, mes)[1]
+    d_ini, d_fin = 1, ndias
+    yi, mi, di = int(inicio[:4]), int(inicio[5:7]), int(inicio[8:10])
+    yf, mf, df = int(fin[:4]), int(fin[5:7]), int(fin[8:10])
+    if (anio, mes) == (yi, mi):
+        d_ini = di
+    if (anio, mes) == (yf, mf):
+        d_fin = df
+    return [f"{d:02d}" for d in range(d_ini, d_fin + 1)]
 
 # 37 niveles de presion estandar de ERA5 (hPa). => num_metgrid_levels = 38 (37 + sup).
 PRESSURE_LEVELS = [
@@ -120,16 +134,17 @@ def download_era5(config_path, solo=None):
     _ensure_cdsapirc(era5)
     c = cdsapi.Client()
 
+    inicio = cfg["periodo"]["inicio"]
+    fin = cfg["periodo"]["fin"]
     for anio, mes in pares:
         final = raw / f"ERA5_{anio}_{mes:02d}.grib"
         if final.exists():
             print(f"[SKIP] {final} ya existe")
             continue
 
-        ndias = calendar.monthrange(anio, mes)[1]
-        dias = [f"{d:02d}" for d in range(1, ndias + 1)]
+        dias = dias_mes_en_periodo(anio, mes, inicio, fin)
         horas = [f"{h:02d}:00" for h in range(0, 24, 6)]  # 6-horario para WPS
-        print(f"[DOWNLOAD] ERA5 {anio}-{mes:02d} ({ndias} dias x {len(horas)} h)")
+        print(f"[DOWNLOAD] ERA5 {anio}-{mes:02d} ({len(dias)} dias x {len(horas)} h)")
 
         pl = raw / f"ERA5_{anio}_{mes:02d}_pl.grib"
         sfc = raw / f"ERA5_{anio}_{mes:02d}_sfc.grib"

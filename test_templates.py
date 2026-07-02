@@ -15,7 +15,7 @@ import yaml
 from jinja2 import Environment, FileSystemLoader, StrictUndefined
 
 sys.path.insert(0, str(Path(__file__).parent / "workflow" / "scripts"))
-from download_era5 import meses_periodo
+from download_era5 import meses_periodo, dias_mes_en_periodo
 from check_config import era5_area_minima
 from prepare_restart import patch_namelist
 
@@ -70,6 +70,18 @@ def test_meses_periodo():
     return True
 
 
+def test_dias_mes_en_periodo():
+    """Meses de borde: solo se bajan los dias dentro de inicio..fin."""
+    ini, fin = "2025-05-29_00:00:00", "2026-06-01_00:00:00"
+    assert dias_mes_en_periodo(2025, 5, ini, fin) == ["29", "30", "31"]
+    assert dias_mes_en_periodo(2026, 6, ini, fin) == ["01"]
+    assert len(dias_mes_en_periodo(2025, 7, ini, fin)) == 31  # mes interior completo
+    pares = meses_periodo(ini, fin)
+    assert pares[0] == (2025, 5) and pares[-1] == (2026, 6) and len(pares) == 14
+    print("[OK] dias_mes_en_periodo recorta los meses de borde (may: 3 dias, jun: 1 dia)")
+    return True
+
+
 def test_era5_area_cubre_d01():
     """El area ERA5 del config cubre el dominio exterior d01."""
     with open("config.yaml") as f:
@@ -119,6 +131,7 @@ if __name__ == "__main__":
     ok = True
     ok &= test_templates_render()
     ok &= test_meses_periodo()
+    ok &= test_dias_mes_en_periodo()
     ok &= test_era5_area_cubre_d01()
     ok &= test_prepare_restart_patch()
     if ok:

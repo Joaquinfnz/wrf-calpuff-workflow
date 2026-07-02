@@ -30,11 +30,11 @@ def main(config_path, dominio="d03"):
     ini = _utc_stamp(cfg["periodo"]["inicio"])
     fin = _utc_stamp(cfg["periodo"]["fin"])
 
-    # Excluir el spin-up del 3D.DAT: si la corrida parte antes del año objetivo
-    # (p.ej. 29-dic), CALMET/CALPUFF solo deben ver desde el 1-ene del año.
-    anio = cfg["periodo"].get("anio")
-    if anio:
-        ini = max(ini, f"{anio}010100")
+    # Excluir el spin-up del 3D.DAT: CALMET/CALPUFF solo deben ver el año
+    # evaluado (desde periodo.inicio_evaluacion), no los dias de estabilizacion.
+    ini_eval = cfg["periodo"].get("inicio_evaluacion")
+    if ini_eval:
+        ini = max(ini, _utc_stamp(ini_eval))
 
     wrf = sorted(p for p in Path("data/wrf").glob(f"wrfout_{dominio}_*")
                  if not p.name.endswith(".log"))

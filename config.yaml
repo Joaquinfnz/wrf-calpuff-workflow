@@ -1,6 +1,7 @@
 # =============================================================================
 # WRF → CALPUFF Workflow — Configuracion de modelacion
-# Guia SEA 2023 "Uso de modelos de calidad del aire en el SEIA" v4
+# Guia SEA "Uso de modelos de calidad del aire en el SEIA", 2a ed. (feb-2023,
+# reeditada ago-2025) — la version vigente.
 # =============================================================================
 
 # ── Proyecto ─────────────────────────────────────────────────────────────────
@@ -79,13 +80,18 @@ wrf:
   geog_data_res: ["30s", "30s", "30s"]
 
 # ── Periodo de modelacion ────────────────────────────────────────────────────
-# Requisito SEA: 1 año completo como minimo para contaminantes primarios
-# Corrida continua con spin-up de 3 dias (29-31 dic) antes del año objetivo.
-# Los meses ERA5 a descargar se derivan de inicio..fin (incluye el spin-up).
+# Requisito SEA (5.3.1): 1 año completo como minimo para contaminantes primarios.
+# Periodo elegido: jun-2025 -> may-2026 (el año movil mas actual con ERA5
+# consolidado; cerrar mas cerca de hoy usaria ERA5T preliminar y las obs de la
+# estacion de validacion no estarian publicadas).
+# Corrida continua con spin-up de 3 dias antes del inicio de evaluacion.
+# Los meses/dias ERA5 a descargar se derivan de inicio..fin (spin-up incluido;
+# en los meses de borde solo se bajan los dias necesarios).
 periodo:
-  inicio: "2023-12-29_00:00:00"
-  fin:    "2024-12-31_18:00:00"
-  anio:   2024   # año objetivo (nombra outputs; el spin-up se excluye del 3D.DAT)
+  inicio: "2025-05-29_00:00:00"             # arranque WRF (incluye spin-up)
+  inicio_evaluacion: "2025-06-01_00:00:00"  # inicio del año evaluado (el spin-up se excluye del 3D.DAT y de las metricas)
+  fin:    "2026-06-01_00:00:00"             # fin (exactamente 365 dias de evaluacion)
+  etiqueta: "jun2025_may2026"               # nombra las carpetas de salida
 
 # ── ERA5 Download (CDS API) ──────────────────────────────────────────────
 era5:
@@ -167,7 +173,9 @@ normas:
 # ── Validacion meteorologica ─────────────────────────────────────────────────
 # Requisito SEA: comparar WRF vs observaciones >= 1 año
 validacion:
-  observaciones: "observaciones.csv"  # CSV con columna fecha + t2/ws10/wd10
+  # CSV con columnas: fecha (YYYY-MM-DD HH:MM, hora local), t2 (°C),
+  # ws10 (m/s), wd10 (grados, 0=N desde donde sopla)
+  observaciones: "observaciones.csv"
   dominio: "d03"          # wrfout a validar (dominio fino, donde cae la estacion)
   estacion_lat: -38.44    # AJUSTAR a la estacion real (celda mas cercana)
   estacion_lon: -71.88
